@@ -11,6 +11,7 @@ import (
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/config"
+	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/secret"
@@ -27,6 +28,7 @@ type App struct {
 	Profiles *profiles.Store
 	Caps     *caps.Registry
 	RCON     *rcon.Monitor
+	MetricZ  *metricz.Receiver
 
 	starters        []func(context.Context)
 	onProfileChange []func()

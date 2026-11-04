@@ -1,0 +1,24 @@
+# HELP dayz_metricz_players_online Total players online in the world
+# TYPE dayz_metricz_players_online gauge
+dayz_metricz_players_online{world="chernarusplus",host="dz01",instance_id="1"} 2
+dayz_metricz_fps{world="chernarusplus",host="dz01",instance_id="1"} 48.5
+dayz_metricz_fps_window_avg{world="chernarusplus",host="dz01",instance_id="1"} 44.2
+dayz_metricz_fps_window_min{world="chernarusplus",host="dz01",instance_id="1"} 31
+dayz_metricz_infected{world="chernarusplus",host="dz01",instance_id="1"} 812
+dayz_metricz_uptime_seconds{world="chernarusplus",host="dz01",instance_id="1"} 3600
+dayz_metricz_player_loaded{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001",guid="0123456789abcdef0123456789abcdef",name="Survivor \"One\"",type="SurvivorM_Mirek"} 1
+dayz_metricz_player_health{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 0.95
+dayz_metricz_player_blood{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 4800
+dayz_metricz_player_unconscious{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 0
+dayz_metricz_player_position_x{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 6560.12
+dayz_metricz_player_position_z{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 2480.5
+dayz_metricz_player_position_y{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000001"} 9.8
+dayz_metricz_player_loaded{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000002",guid="fedcba9876543210fedcba9876543210",name="NoPosition"} 1
+dayz_metricz_player_health{world="chernarusplus",host="dz01",instance_id="1",steam_id="76561198000000002"} 1
+dayz_metricz_transport_health{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 0.7
+dayz_metricz_transport_fuel_fraction{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 0.5
+dayz_metricz_transport_engine_on{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 1
+dayz_metricz_transport_position_x{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 10450
+dayz_metricz_transport_position_z{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 2280
+dayz_metricz_transport_position_y{world="chernarusplus",host="dz01",instance_id="1",class="OffroadHatchback",type="Car",hash="123456"} 6
+this line is garbage
