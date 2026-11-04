@@ -141,14 +141,15 @@ function Tracking() {
   return (
     <Card title="Event & rare-item tracking">
       <div className="grid">
-        <label>Event entity classes (<code>Class=category</code>; categories: heli_crash, airdrop, loot_box, military_convoy, police, train, custom)
+        <label>Event entity classes (<code>Class=category</code>; categories: heli_crash, plane_crash, airdrop, loot_box, military_convoy, police, train, custom)
           <textarea rows={6} value={cls} onChange={(e) => setClasses(e.target.value)} />
         </label>
-        <label>Tracked item classnames (one per line; CE spawns and first observations of existing ground items)
+        <label>Tracked item classnames (one per line; ground only; updates when dropped or picked up)
           <textarea rows={6} value={its} onChange={(e) => setItems(e.target.value)} />
         </label>
       </div>
-      <div className="row end"><button onClick={save}>Save</button></div>
+      <div className="row end"><button onClick={save}>Save & rescan</button></div>
+      <p className="muted small">No restart is needed for tracking changes. Ground items exclude inventories and containers. Bridge rescans after saving, at most once per minute.</p>
     </Card>
   )
 }

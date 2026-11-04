@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { MapState, Marker, MzPlayer, MzVehicle } from '../api'
 import { useApi } from '../hooks'
 import { Badge } from '../ui'
-import { ago, fromLatLng, grid, pct, toLatLng, TILE } from '../util'
+import { ago, fromLatLng, grid, pct, toLatLng, TILE, WORLD } from '../util'
+import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, vehicleIcon } from '../mapIcons'
 
 const TILE_URL = '/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp'
-const catColor: Record<string, string> = { heli_crash: '#e67e22', airdrop: '#3498db', loot_box: '#9b59b6', military_convoy:'#db8454',police:'#6cb4ff',train:'#d987be', custom: '#1abc9c', rare_item: '#f1c40f' }
-
-type Sel = { kind: 'player'; p: MzPlayer } | { kind: 'vehicle'; v: MzVehicle } | { kind: 'event'; m: Marker } | null
+type Sel = { kind: 'player'; p: MzPlayer } | { kind: 'vehicle'; v: MzVehicle } | { kind: 'event'; m: Marker; members:Marker[] } | null
 function tooltip(text:string) { const node=document.createElement('span');node.textContent=text;return node }
+function entityIcon(kind:MapIcon,muted=false,count=1) {
+ return L.divIcon({className:`entity-pin icon-${kind}${muted?' is-muted':''}`,html:iconSvg(kind)+(count>1?`<span class="map-count">${count}</span>`:''),iconSize:[30,30],iconAnchor:[15,15],tooltipAnchor:[0,-18]})
+}
 
 export default function MapPage() {
   const state = useApi<MapState>('/api/map/state', ['map'], 15000)
@@ -19,7 +21,8 @@ export default function MapPage() {
   const layers = useRef<Record<string, L.LayerGroup>>({})
   const [sel, setSel] = useState<Sel>(null)
   const [labels, setLabels] = useState(true)
-  const [show, setShow] = useState({ players: true, vehicles: true, events: true, ended: false, items: true })
+  const [show, setShow] = useState({ players: true, vehicles: true, events: true, ended: false, items: true, bases:true })
+  const [hidden,setHidden]=useState<Set<MapIcon>>(()=>new Set())
   const [tilesOk, setTilesOk] = useState<boolean | null>(null)
   const [cursor, setCursor] = useState<string>('')
 
@@ -34,7 +37,7 @@ export default function MapPage() {
       const g = fromLatLng(e.latlng.lat, e.latlng.lng)
       setCursor(`${g.x.toFixed(0)} / ${g.z.toFixed(0)} · ${grid(g.x, g.z)}`)
     })
-    for (const k of ['players', 'vehicles', 'events']) layers.current[k] = L.layerGroup().addTo(m)
+    for (const k of ['players', 'vehicles', 'events','items','bases']) layers.current[k] = L.layerGroup().addTo(m)
     map.current = m
     const img = new Image()
     img.onload = () => setTilesOk(true)
@@ -52,34 +55,49 @@ export default function MapPage() {
     if (!data?.available) return
     const stale = !data.fresh
     if (show.players) for (const p of data.players ?? []) {
-      const mk = L.circleMarker(toLatLng(p.x, p.z), { radius: 6, color: '#fff', weight: 1.5, fillColor: stale ? '#888' : p.unconscious ? '#e74c3c' : '#2ecc71', fillOpacity: 0.95 })
+      const mk = L.circleMarker(toLatLng(p.x, p.z), { radius: 6, color: '#fff', weight: 1.5, fillColor: '#2ecc71', fillOpacity: stale?0.45:0.95 })
       if (labels) mk.bindTooltip(tooltip(p.name || p.steam64), { permanent: true, direction: 'right', className: 'lbl' })
       mk.on('click', () => setSel({ kind: 'player', p }))
       mk.addTo(g.players)
     }
     if (show.vehicles) for (const v of data.vehicles ?? []) {
-      const mk = L.circleMarker(toLatLng(v.x, v.z), { radius: 5, color: '#000', weight: 1, fillColor: stale ? '#888' : v.engine_on ? '#f39c12' : '#95a5a6', fillOpacity: 0.9 })
+      const kind=vehicleIcon(v)
+      if(hidden.has(kind))continue
+      const mk = L.marker(toLatLng(v.x, v.z), {icon:entityIcon(kind,stale),title:v.class,alt:v.class,keyboard:true})
       mk.bindTooltip(tooltip(v.class), { direction: 'top' })
       mk.on('click', () => setSel({ kind: 'vehicle', v }))
       mk.addTo(g.vehicles)
     }
-  }, [data, labels, show.players, show.vehicles])
+  }, [data, labels, show.players, show.vehicles,hidden])
 
+  const sites=useMemo(()=>groupMarkers(events.data??[]),[events.data])
   useEffect(() => {
-    const g = layers.current.events
-    if (!g) return
-    g.clearLayers()
-    if (!show.events || !events.data) return
-    for (const m of events.data) {
-      if (m.category === 'rare_item' && !show.items) continue
+    const groups=layers.current
+    if (!groups.events) return
+    for(const name of ['events','items','bases'])groups[name].clearLayers()
+    for (const site of sites) {
+      const m=site.marker,kind=markerIcon(m)
+      const item=['tracked_item','rare_item'].includes(m.category)||(m.category==='custom'&&['item','weapon'].includes(m.kind||''))
+      const base=m.category==='base_flag'
+      if (hidden.has(kind)||(!show.items&&item)||(!show.bases&&base)||(!show.events&&!item&&!base))continue
       if ((m.status === 'ended' || m.status === 'expired') && !show.ended) continue
+      if(m.status==='historical'&&!show.ended)continue
       const live = m.status === 'active'
-      const mk = L.circleMarker(toLatLng(m.x, m.z), { radius: m.category === 'rare_item' ? 4 : 9, color: catColor[m.category] || '#fff', weight: live ? 3 : 1, dashArray: live ? undefined : '3 3', fillOpacity: live ? 0.4 : 0.1 })
-      mk.bindTooltip(`${m.category.replace('_', ' ')} · ${m.status}`, { direction: 'top' })
-      mk.on('click', () => setSel({ kind: 'event', m }))
+      const title=site.members.length>1?`${iconLabels[kind]} · ${site.members.length} observed objects`:markerTitle(m)
+      const g=groups[item?'items':base?'bases':'events']
+      const mk = L.marker(toLatLng(m.x, m.z), {icon:entityIcon(kind,!live,site.members.length),title,alt:title,keyboard:true})
+      mk.bindTooltip(tooltip(title), { direction: 'top',permanent:labels&&(item||base),className:'lbl' })
+      mk.on('click', () => setSel({ kind: 'event', m,members:site.members }))
       mk.addTo(g)
     }
-  }, [events.data, show.events, show.ended, show.items])
+  }, [sites, show.events, show.ended, show.items,show.bases,labels,hidden])
+
+  useEffect(()=>{
+    const m=map.current
+    if(!m||sel?.kind!=='event'||sel.m.category!=='base_flag'||!sel.m.radius)return
+    const ring=L.circle(toLatLng(sel.m.x,sel.m.z),{radius:sel.m.radius*TILE/WORLD,color:'#bba0ff',weight:1,fillOpacity:0.06,interactive:false}).addTo(m)
+    return()=>{ring.remove()}
+  },[sel])
 
   const toggle = (k: keyof typeof show) => setShow((s) => ({ ...s, [k]: !s[k] }))
 
@@ -95,8 +113,9 @@ export default function MapPage() {
         <label><input type="checkbox" checked={labels} onChange={() => setLabels(!labels)} /> names</label>
         <label><input type="checkbox" checked={show.vehicles} onChange={() => toggle('vehicles')} /> vehicles</label>
         <label><input type="checkbox" checked={show.events} onChange={() => toggle('events')} /> events</label>
-        <label><input type="checkbox" checked={show.items} onChange={() => toggle('items')} /> rare items</label>
-        <label><input type="checkbox" checked={show.ended} onChange={() => toggle('ended')} /> ended</label>
+        <label><input type="checkbox" checked={show.items} onChange={() => toggle('items')} /> items</label>
+        <label><input type="checkbox" checked={show.bases} onChange={() => toggle('bases')} /> base flags</label>
+        <label><input type="checkbox" checked={show.ended} onChange={() => toggle('ended')} /> history</label>
         <span className="muted small grow right">{cursor}</span>
       </div>
       {tilesOk === false && <div className="warnings">Map tiles are not installed in /var/lib/dzm/tiles/chernarusplus (see docs/install-game-side.md). Markers still work.</div>}
@@ -106,10 +125,9 @@ export default function MapPage() {
         {sel && <Inspector sel={sel} onClose={() => setSel(null)} />}
       </div>
       <div className="legend small">
-        <span><i style={{ background: '#2ecc71' }} /> player</span><span><i style={{ background: '#e74c3c' }} /> unconscious</span>
-        <span><i style={{ background: '#f39c12' }} /> vehicle (engine on)</span><span><i style={{ background: '#95a5a6' }} /> vehicle</span>
-        {Object.entries(catColor).map(([k, c]) => <span key={k}><i style={{ background: c }} /> {k.replace('_', ' ')}</span>)}
-        <span className="muted">Item markers record a spawn or first ground observation; they are not a current inventory location.</span>
+        <span><i style={{ background: '#2ecc71' }} /> Players</span>
+        {(Object.keys(iconLabels) as MapIcon[]).map(kind=><button key={kind} className={`map-key icon-${kind}`} aria-pressed={!hidden.has(kind)} onClick={()=>setHidden(old=>{const next=new Set(old);if(next.has(kind))next.delete(kind);else next.add(kind);return next})} title={`Show or hide ${iconLabels[kind]}`}><span dangerouslySetInnerHTML={{__html:iconSvg(kind)}}/>{iconLabels[kind]}</button>)}
+        <span className="muted">Items show confirmed ground locations. History includes earlier observations. Select an icon for details; numbered icons combine nearby objects.</span>
       </div>
     </div>
   )
@@ -118,7 +136,7 @@ export default function MapPage() {
 function Inspector({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => void }) {
   return (
     <div className="inspector">
-      <button className="link right" onClick={onClose}>✕</button>
+      <button className="link right" onClick={onClose}>Close</button>
       {sel.kind === 'player' && (
         <>
           <h3>{sel.p.name || 'Unknown'}</h3>
@@ -148,10 +166,13 @@ function Inspector({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => voi
       )}
       {sel.kind === 'event' && (
         <>
-          <h3>{sel.m.category.replace('_', ' ')}</h3>
+          <h3>{sel.members.length>1?iconLabels[markerIcon(sel.m)]:markerTitle(sel.m)}</h3>
           <dl>
             <dt>Status</dt><dd><Badge state={sel.m.status} /></dd>
             <dt>Class</dt><dd>{sel.m.class || '—'}</dd>
+            {sel.m.group&&<><dt>Group</dt><dd>{sel.m.group}</dd></>}
+            {!!sel.m.radius&&<><dt>Territory radius</dt><dd>{sel.m.radius} m</dd></>}
+            {sel.members.length>1&&<><dt>Observed objects</dt><dd>{sel.members.length}<ul>{sel.members.map(member=><li key={member.id}>{markerTitle(member)} · {grid(member.x,member.z)}</li>)}</ul></dd></>}
             <dt>{sel.m.category === 'rare_item' ? sel.m.observation === 'item.observed' ? 'First observed' : 'Spawned at' : 'Started'}</dt><dd>{new Date(sel.m.started_at).toLocaleString()}</dd>
             {sel.m.ended_at && <><dt>Ended</dt><dd>{new Date(sel.m.ended_at).toLocaleString()}</dd></>}
             <dt>Position</dt><dd>{sel.m.x.toFixed(0)} / {sel.m.z.toFixed(0)} ({grid(sel.m.x, sel.m.z)})</dd>
