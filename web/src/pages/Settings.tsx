@@ -76,6 +76,7 @@ export default function Settings() {
         ) : <p className="muted">Not connected. Download DZMBridge.zip from the latest GitHub release, install it as a server mod, and paste the config from "Connect…". The game-side PBO is not auto-updated: compare the installed version with the latest release after each update.</p>}
       </Card>
       <Tracking />
+      <PriorityQueue />
       {edit && (
         <Confirm title={edit.id ? 'Edit server' : 'Add server'} onClose={() => setEdit(null)} onConfirm={save} body={
           <div className="form">
@@ -147,6 +148,42 @@ function Tracking() {
         </label>
       </div>
       <div className="row end"><button onClick={save}>Save</button></div>
+    </Card>
+  )
+}
+
+function PriorityQueue() {
+  const q = useApi<{ entries: { steam64: string; name: string; reason: string; expires_at?: string; expired: boolean; applied: boolean; added_by: string }[]; note: string }>('/api/priority')
+  const [f, setF] = useState({ steam64: '', reason: '', days: '0' })
+  const notify = useNotify()
+  const call = async (fn: () => Promise<unknown>, ok: string) => {
+    try { await fn(); notify(ok); q.reload() } catch (e: any) { notify(e.message, 'bad') }
+  }
+  return (
+    <Card title="Priority queue (list only)" actions={<a className="button" href="/api/priority/export" target="_blank" rel="noreferrer">Export Steam64 list</a>}>
+      <p className="small muted">{q.data?.note}</p>
+      {!q.data?.entries.length ? <Empty>No priority players.</Empty> : (
+        <table>
+          <thead><tr><th>Player</th><th>Reason</th><th>Expires</th><th>Applied in provider?</th><th /></tr></thead>
+          <tbody>
+            {q.data.entries.map((e) => (
+              <tr key={e.steam64} className={e.expired ? 'muted' : ''}>
+                <td>{e.name || <code className="small">{e.steam64}</code>}</td>
+                <td>{e.reason}</td>
+                <td>{e.expires_at ? (e.expired ? 'expired' : new Date(e.expires_at).toLocaleDateString()) : 'never'}</td>
+                <td><input type="checkbox" checked={e.applied} onChange={(ev) => call(() => api.post(`/api/priority/${e.steam64}/applied`, { applied: ev.target.checked }), 'Updated')} /></td>
+                <td><button className="small" onClick={() => call(() => api.post(`/api/priority/${e.steam64}/remove`), 'Removed (remove it in the provider too)')}>Remove</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="row wrap">
+        <input placeholder="Steam64" value={f.steam64} onChange={(e) => setF({ ...f, steam64: e.target.value })} />
+        <input placeholder="Reason" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
+        <input type="number" min={0} title="days (0 = never)" value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} />
+        <button onClick={() => call(() => api.post('/api/priority', { steam64: f.steam64.trim(), reason: f.reason, days: parseInt(f.days, 10) || 0 }), 'Added')}>Add</button>
+      </div>
     </Card>
   )
 }
