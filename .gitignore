@@ -1,0 +1,9 @@
+/dzm
+/dist/
+/build/
+node_modules/
+internal/web/dist/*
+!internal/web/dist/placeholder.txt
+*.db
+*.db-wal
+*.db-shm
