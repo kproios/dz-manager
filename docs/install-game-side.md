@@ -39,9 +39,18 @@ go run ./cmd/loader -c config.yaml --limit chernarusplus
 sudo mkdir -p /var/lib/dzm/tiles && sudo cp -r maps/chernarusplus /var/lib/dzm/tiles/
 sudo chown -R dzm:dzm /var/lib/dzm/tiles
 ```
-The UI expects `/var/lib/dzm/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp` (zoom 0 = the
+The UI expects `/var/lib/dzm/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp` (native zooms 0–6; zoom 0 = the
 whole 15 360 m map in one 256 px tile). If your loader output differs, adjust the folder names,
 not the code. Markers work without tiles.
+
+On 2026-11-04 the upstream tile endpoint refused some loader requests, producing
+an incomplete download despite a successful loader exit. The deployed host instead
+uses the complete data from the official `ghcr.io/woozymasta/dzmap:vanilla` image:
+image layer SHA256 digests verified, only `maps/chernarusplus` data extracted,
+**no container or downloaded executable run**. Installed topographic pyramid:
+1/4/16/64/256/1024/4096 tiles at zooms0–6 (5461 tiles), plus locations GeoJSON.
+The viewer scales those native tiles for higher zooms. Imagery remains private,
+outside git, attributed to Xam.nu; no Node/Go/Docker is installed in application host.
 
 ## What is verified vs pending
 | Item | Status |
