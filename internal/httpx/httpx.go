@@ -19,7 +19,9 @@ func JSON(w http.ResponseWriter, status int, v any) {
 }
 
 // Error writes {"error": msg}.
-func Error(w http.ResponseWriter, status int, msg string) { JSON(w, status, map[string]string{"error": msg}) }
+func Error(w http.ResponseWriter, status int, msg string) {
+	JSON(w, status, map[string]string{"error": msg})
+}
 
 // Decode reads a JSON body of at most limit bytes into v, rejecting unknown fields.
 func Decode(r *http.Request, limit int64, v any) error {

@@ -159,4 +159,6 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-func itoa(i int) string { return strings.TrimSpace(strings.Repeat(" ", 0) + string(rune('0'+i/10)) + string(rune('0'+i%10))) }
+func itoa(i int) string {
+	return strings.TrimSpace(strings.Repeat(" ", 0) + string(rune('0'+i/10)) + string(rune('0'+i%10)))
+}
