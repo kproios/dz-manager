@@ -69,7 +69,7 @@ func New(t *testing.T, dataDir string) *Env {
 	ts.Config.Handler = a.Server.Handler()
 	ts.Start()
 	t.Cleanup(ts.Close)
-	a.Start(ctx)
+	// Background workers are not started: tests drive pollers explicitly.
 	jar, _ := cookiejar.New(nil)
 	return &Env{T: t, App: a, TS: ts, Issuer: is, Client: &http.Client{Jar: jar}, Ctx: ctx}
 }
