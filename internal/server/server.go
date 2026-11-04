@@ -166,7 +166,16 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		} else if rec.code >= 400 {
 			lvl = slog.LevelInfo
 		}
-		s.Log.Log(r.Context(), lvl, "http", "method", r.Method, "path", r.URL.Path, "status", rec.code, "dur_ms", time.Since(start).Milliseconds())
+		loggedPath := r.URL.Path
+		if rest, ok := strings.CutPrefix(loggedPath, "/ingest/v1/"); ok {
+			// DayZ's bridge credentials occupy this segment, including on errors.
+			_, route, hasRoute := strings.Cut(rest, "/")
+			loggedPath = "/ingest/v1/[redacted]"
+			if hasRoute {
+				loggedPath += "/" + route
+			}
+		}
+		s.Log.Log(r.Context(), lvl, "http", "method", r.Method, "path", loggedPath, "status", rec.code, "dur_ms", time.Since(start).Milliseconds())
 	})
 }
 
