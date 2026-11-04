@@ -88,6 +88,12 @@ class DZMB_Bridge
 	protected float m_EventRefreshAcc;
 	protected int m_TrackingRevision;
 	protected ref map<EntityAI, bool> m_LocalEntities = new map<EntityAI, bool>;
+	protected static ref map<string, string> s_CategoryCache;
+	protected ref array<Object> m_ScanObjects;
+	protected int m_ScanIndex;
+	protected int m_ScanEvents;
+	protected int m_ScanItems;
+	protected int m_ScanStarted;
 
 	static DZMB_Bridge Get()
 	{
@@ -105,6 +111,7 @@ class DZMB_Bridge
 			return;
 		}
 		s_Instance = new DZMB_Bridge();
+		s_CategoryCache = new map<string, string>;
 		s_Instance.Init();
 	}
 
@@ -180,12 +187,13 @@ class DZMB_Bridge
 		m_EventRefreshAcc += dt;
 		// One census after CE initialization, and only when tracking settings change.
 		// Normal operation uses hooks and the small configured-event registry.
-		if (m_TrackingScanPending && GetGame().GetTime() > 120000 && GetGame().GetTime() - m_LastTrackingScan > 60000)
+		if (m_TrackingScanPending && !m_ScanObjects && GetGame().GetTime() > 120000 && GetGame().GetTime() - m_LastTrackingScan > 60000)
 		{
 			m_TrackingScanPending = false;
 			m_LastTrackingScan = GetGame().GetTime();
 			ReconcileTracking();
 		}
+		ContinueTrackingScan();
 		if (m_EventRefreshAcc >= 60)
 		{
 			m_EventRefreshAcc = 0;
@@ -556,34 +564,47 @@ class DZMB_Bridge
 		cfg.event_classes = t.event_classes;
 		cfg.rare_items = t.rare_items;
 		m_TrackingRevision = t.revision;
+		s_CategoryCache = new map<string, string>;
 		m_TrackingScanPending = true;
 		DZMB_Log.Info("tracking settings applied: " + cfg.event_classes.Count().ToString() + " event classes, " + cfg.rare_items.Count().ToString() + " item classes");
 	}
 
 	void ReconcileTracking()
 	{
-		array<Object> objects = new array<Object>;
+		m_ScanObjects = new array<Object>;
 		array<CargoBase> cargo = new array<CargoBase>;
-		GetGame().GetObjectsAtPosition3D("7680 0 7680", 12000, objects, cargo);
-		int eventsFound = 0;
-		int itemsFound = 0;
-		foreach (Object object : objects)
+		m_ScanStarted = GetGame().GetTime();
+		GetGame().GetObjectsAtPosition3D("7680 0 7680", 12000, m_ScanObjects, cargo);
+		m_ScanIndex = 0;
+		m_ScanEvents = 0;
+		m_ScanItems = 0;
+	}
+
+	void ContinueTrackingScan()
+	{
+		if (!m_ScanObjects) return;
+		// Process one census incrementally; never query the world on every frame.
+		int until = Math.Min(m_ScanIndex + 250, m_ScanObjects.Count());
+		while (m_ScanIndex < until)
 		{
-			EntityAI entity = EntityAI.Cast(object);
+			EntityAI entity = EntityAI.Cast(m_ScanObjects[m_ScanIndex]);
+			m_ScanIndex++;
 			if (!entity) continue;
 			string category;
 			if (WantsEntity(entity))
 			{
 				OnEntitySpawned(entity);
-				eventsFound++;
+				m_ScanEvents++;
 			}
 			if (!entity.GetHierarchyParent() && DZMB_Config.Get().rare_items.Find(entity.GetType()) >= 0 && !m_SeenItems.Contains(entity))
 			{
 				EmitItem(entity, "item.observed");
-				itemsFound++;
+				m_ScanItems++;
 			}
 		}
-		DZMB_Log.Info("tracking census complete: " + eventsFound.ToString() + " active events, " + itemsFound.ToString() + " existing ground items first observed");
+		if (m_ScanIndex < m_ScanObjects.Count()) return;
+		DZMB_Log.Info("tracking census complete: " + m_ScanEvents.ToString() + " active events, " + m_ScanItems.ToString() + " existing ground items first observed, " + (GetGame().GetTime() - m_ScanStarted).ToString() + " ms");
+		m_ScanObjects = null;
 	}
 
 	void OnEntitySpawned(EntityAI e)
@@ -648,13 +669,21 @@ class DZMB_Bridge
 
 	static bool EventCategory(EntityAI entity, out string category)
 	{
-		if (DZMB_Config.Get().event_classes.Find(entity.GetType(), category)) return true;
+		if (!s_CategoryCache) s_CategoryCache = new map<string, string>;
+		string entityClass = entity.GetType();
+		if (s_CategoryCache.Find(entityClass, category)) return category != "";
+		if (DZMB_Config.Get().event_classes.Find(entityClass, category))
+		{
+			s_CategoryCache.Set(entityClass, category);
+			return true;
+		}
 		// Static scenery wrecks are not active crash events.
-		if (entity.GetType().IndexOf("StaticObj_") == 0) return false;
+		if (entityClass.IndexOf("StaticObj_") == 0) { s_CategoryCache.Set(entityClass, ""); return false; }
 		foreach (string cls, string cat : DZMB_Config.Get().event_classes)
 		{
-			if (entity.IsKindOf(cls)) { category = cat; return true; }
+			if (entity.IsKindOf(cls)) { category = cat; s_CategoryCache.Set(entityClass, cat); return true; }
 		}
+		s_CategoryCache.Set(entityClass, "");
 		return false;
 	}
 
