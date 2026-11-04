@@ -1,6 +1,7 @@
 package profiles
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -14,6 +15,8 @@ type API struct {
 	Store     *Store
 	Audit     *audit.Log
 	IngestURL string
+	// Extras adds owner-configured keys (event classes, rare items) to the bridge config.
+	Extras func(ctx context.Context) map[string]any
 }
 
 // Register adds routes to an authenticated mux.
@@ -120,5 +123,11 @@ func (a *API) wizard(w http.ResponseWriter, r *http.Request) {
 	}
 	// Revealing ingest credentials is security-relevant: audit it.
 	_ = a.Audit.Write(r.Context(), actor(r), "profile.reveal_wizard", id, nil, "ok", "")
-	httpx.JSON(w, 200, BuildWizard(p, sec, a.IngestURL))
+	wz := BuildWizard(p, sec, a.IngestURL)
+	if a.Extras != nil {
+		for k, v := range a.Extras(r.Context()) {
+			wz.BridgeConfig[k] = v
+		}
+	}
+	httpx.JSON(w, 200, wz)
 }
