@@ -306,7 +306,7 @@ class DZMB_Bridge
 	{
 		array<Man> all = new array<Man>;
 		GetGame().GetPlayers(all);
-		string out = "{\"players\":[";
+		string playersJson = "{\"players\":[";
 		bool first = true;
 		foreach (Man m : all)
 		{
@@ -317,11 +317,11 @@ class DZMB_Bridge
 			j.Str("steam64", pb.GetIdentity().GetPlainId()).Str("uid", pb.GetIdentity().GetId()).Str("name", pb.GetIdentity().GetName());
 			j.Pos("pos", pb.GetPosition()).BoolV("alive", pb.IsAlive());
 			if (!first)
-				out += ",";
+				playersJson += ",";
 			first = false;
-			out += j.End();
+			playersJson += j.End();
 		}
-		return out + "]}";
+		return playersJson + "]}";
 	}
 
 	protected void DoTeleport(DZMB_Cmd c, PlayerBase p)
