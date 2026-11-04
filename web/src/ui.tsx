@@ -18,7 +18,7 @@ export function Card({ title, children, actions }: { title?: ReactNode; children
 const stateClass: Record<string, string> = {
   ok: 'ok', stale: 'warn', degraded: 'warn', unverified: 'info', unconfigured: 'muted', unsupported: 'muted',
   unreachable: 'bad', auth_failed: 'bad', misconfigured: 'bad', active: 'ok', ended: 'muted', expired: 'muted',
-  historical: 'info', revoked: 'muted', error: 'bad', denied: 'bad',
+  historical: 'info', revoked: 'muted', error: 'bad', denied: 'bad', info: 'info', warn: 'warn', bad: 'bad', muted: 'muted',
 }
 
 export function Badge({ state, children }: { state: string; children?: ReactNode }) {

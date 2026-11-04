@@ -106,7 +106,13 @@ func (s *Service) onConnect(ctx context.Context, ev bridge.Event) {
 		reported = d.UID
 	}
 	s.upsert(ctx, steam, d.Name, reported, ev.Time)
-	// A still-open session means we missed the disconnect: close it as inferred.
+	// Bridge sessions are authoritative: presence (MetricZ) sessions that began
+	// after this connect are dropped, older ones end as presence_end (no playtime
+	// is added for them, so nothing is double-counted).
+	t := ts(ev.Time)
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM player_sessions WHERE server_id=? AND steam64=? AND end_kind='open' AND source='metricz' AND started_at >= ?`, ev.ServerID, steam, t)
+	_, _ = s.DB.ExecContext(ctx, `UPDATE player_sessions SET ended_at=last_seen, end_kind='presence_end' WHERE server_id=? AND steam64=? AND end_kind='open' AND source='metricz'`, ev.ServerID, steam)
+	// A still-open bridge session means we missed the disconnect: close it as inferred.
 	s.closeOpen(ctx, ev.ServerID, steam, "inferred_end", nil)
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO player_sessions(server_id,steam64,started_at,last_seen,source) VALUES(?,?,?,?, 'bridge')`, ev.ServerID, steam, ts(ev.Time), ts(ev.Time))
 }
@@ -410,6 +416,8 @@ func (s *Service) GetProfile(ctx context.Context, id string) (*Profile, error) {
 				if ended.Valid {
 					se.EndedAt = &ended.String
 					end, _ = time.Parse(time.RFC3339Nano, ended.String)
+				} else {
+					end = time.Now() // open session: duration so far
 				}
 				se.DurationS = int64(end.Sub(st).Seconds())
 				pr.Sessions = append(pr.Sessions, se)
