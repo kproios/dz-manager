@@ -11,6 +11,7 @@ import (
 	"github.com/kproios/dz-manager/internal/apptest"
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/bridge"
+	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/profiles"
 )
@@ -146,6 +147,18 @@ func TestCommandsLifecycle(t *testing.T) {
 	c, _ = b.Get(e.Ctx, id3)
 	if c.Status != "expired" || !strings.Contains(c.Error, "late result") {
 		t.Fatalf("late result: %+v", c)
+	}
+}
+
+func TestPresenceThenBridge(t *testing.T) {
+	e := setup(t)
+	now := time.Now()
+	e.App.Players.Presence(e.server, []metricz.Player{{Steam64: alice, Name: "Alice"}}, now)
+	e.send(ev("c1", "player.connect", now.Add(-time.Hour), alice, map[string]any{"name": "Alice"}))
+	var pa players.Profile
+	e.JSON("GET", "/api/players/"+alice, nil, &pa)
+	if len(pa.Sessions) != 1 || pa.Sessions[0].Source != "bridge" || pa.Sessions[0].EndKind != "open" || pa.Sessions[0].DurationS < 3500 {
+		t.Fatalf("sessions: %+v", pa.Sessions)
 	}
 }
 
