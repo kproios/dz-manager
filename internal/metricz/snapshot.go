@@ -133,13 +133,13 @@ func Build(samples []Sample) Snapshot {
 	}
 	snap.Players = []Player{}
 	for _, p := range players {
-		if p.hasPos == 3 {
+		if p.hasPos&3 == 3 {
 			snap.Players = append(snap.Players, *p)
 		}
 	}
 	snap.Vehicles = []Vehicle{}
 	for _, v := range vehicles {
-		if v.hasPos == 3 {
+		if v.hasPos&3 == 3 {
 			snap.Vehicles = append(snap.Vehicles, *v)
 		}
 	}
@@ -153,11 +153,11 @@ func Build(samples []Sample) Snapshot {
 func applyPlayer(p *Player, m string, v float64) {
 	switch m {
 	case "position_x":
-		p.X, p.hasPos = v, p.hasPos+1
+		p.X, p.hasPos = v, p.hasPos|1
 	case "position_y":
-		p.Y, p.hasPos = v, p.hasPos+1
+		p.Y = v
 	case "position_z":
-		p.Z, p.hasPos = v, p.hasPos+1
+		p.Z, p.hasPos = v, p.hasPos|2
 	case "orientation":
 		p.Orientation = f(v)
 	case "health":
@@ -190,11 +190,11 @@ func applyPlayer(p *Player, m string, v float64) {
 func applyVehicle(t *Vehicle, m string, v float64) {
 	switch m {
 	case "position_x":
-		t.X, t.hasPos = v, t.hasPos+1
+		t.X, t.hasPos = v, t.hasPos|1
 	case "position_y":
-		t.Y, t.hasPos = v, t.hasPos+1
+		t.Y = v
 	case "position_z":
-		t.Z, t.hasPos = v, t.hasPos+1
+		t.Z, t.hasPos = v, t.hasPos|2
 	case "orientation":
 		t.Orientation = f(v)
 	case "health":

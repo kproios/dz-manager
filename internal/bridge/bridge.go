@@ -74,13 +74,14 @@ type Handler func(ctx context.Context, ev Event)
 
 // Info is the latest heartbeat.
 type Info struct {
-	ModVersion  string    `json:"mod_version"`
-	GameVersion string    `json:"game_version"`
-	Commands    []string  `json:"commands"`
-	Emitter     string    `json:"emitter"`
-	LastSeen    time.Time `json:"last_seen"`
-	Dropped     int64     `json:"dropped"`
-	QueueDepth  int64     `json:"queue_depth"`
+	ModVersion      string    `json:"mod_version"`
+	GameVersion     string    `json:"game_version"`
+	Commands        []string  `json:"commands"`
+	Emitter         string    `json:"emitter"`
+	LastSeen        time.Time `json:"last_seen"`
+	Dropped         int64     `json:"dropped"`
+	QueueDepth      int64     `json:"queue_depth"`
+	TrackingInvalid []string  `json:"tracking_invalid"`
 }
 
 // Bridge implements ingest + commands.
@@ -93,6 +94,8 @@ type Bridge struct {
 	Now      func() time.Time
 	// Publish notifies the UI about new events (type, server).
 	Publish func(serverID string, types []string)
+	// Tracking returns non-secret settings delivered through the existing outbound poll.
+	Tracking func(context.Context) any
 
 	mu       sync.RWMutex
 	handlers map[string][]Handler
@@ -316,14 +319,15 @@ func (b *Bridge) dispatch(ctx context.Context, ev Event) {
 
 func (b *Bridge) heartbeat(ev Event) {
 	var d struct {
-		ModVersion  string   `json:"mod_version"`
-		GameVersion string   `json:"game_version"`
-		Commands    []string `json:"commands"`
-		Dropped     int64    `json:"dropped"`
-		Queue       int64    `json:"queue"`
+		ModVersion      string   `json:"mod_version"`
+		TrackingInvalid []string `json:"tracking_invalid"`
+		GameVersion     string   `json:"game_version"`
+		Commands        []string `json:"commands"`
+		Dropped         int64    `json:"dropped"`
+		Queue           int64    `json:"queue"`
 	}
 	_ = json.Unmarshal(ev.Data, &d)
-	info := Info{ModVersion: d.ModVersion, GameVersion: d.GameVersion, Commands: d.Commands, Emitter: ev.Source, LastSeen: b.Now().UTC(), Dropped: d.Dropped, QueueDepth: d.Queue}
+	info := Info{ModVersion: d.ModVersion, GameVersion: d.GameVersion, Commands: d.Commands, Emitter: ev.Source, LastSeen: b.Now().UTC(), Dropped: d.Dropped, QueueDepth: d.Queue, TrackingInvalid: d.TrackingInvalid}
 	b.mu.Lock()
 	b.info[ev.ServerID] = info
 	b.mu.Unlock()
@@ -434,7 +438,11 @@ func (b *Bridge) poll(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, slim{c.ID, c.Action, c.Target, p, c.ExpiresAt})
 	}
-	httpx.JSON(w, 200, map[string]any{"commands": out})
+	response := map[string]any{"commands": out}
+	if b.Tracking != nil {
+		response["tracking"] = b.Tracking(r.Context())
+	}
+	httpx.JSON(w, 200, response)
 }
 
 // Deliver marks up to n queued, unexpired commands as delivered and returns them.
@@ -597,6 +605,7 @@ func (b *Bridge) Recent(ctx context.Context, serverID, typ string, limit int) ([
 
 // RegisterAPI adds authenticated routes.
 func (b *Bridge) RegisterAPI(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/events", b.search)
 	mux.HandleFunc("GET /api/bridge", func(w http.ResponseWriter, r *http.Request) {
 		p, _, err := b.Profiles.Active(r.Context())
 		if err != nil {

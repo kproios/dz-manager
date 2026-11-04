@@ -193,8 +193,12 @@ func (rc *Receiver) ingestText(ctx context.Context, serverID, text string) error
 	snap := Build(samples)
 	snap.ServerID, snap.BadLines, snap.ReceivedAt = serverID, bad, time.Now().UTC()
 	rc.mu.Lock()
+	previous, hadPrevious := rc.snaps[serverID]
 	rc.snaps[serverID] = snap
 	rc.mu.Unlock()
+	if !hadPrevious || len(previous.Players) != len(snap.Players) || len(previous.Vehicles) != len(snap.Vehicles) {
+		rc.Log.Info("MetricZ map entity counts", "players", len(snap.Players), "vehicles", len(snap.Vehicles), "samples", snap.Samples, "bad_lines", snap.BadLines)
+	}
 	rc.Caps.Set(serverID, caps.MetricZ, caps.OK, "")
 	if err := rc.recordPerf(ctx, snap); err != nil {
 		rc.Log.Warn("metricz: perf write failed", "err", err)
