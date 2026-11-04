@@ -26,7 +26,7 @@ export default function MapPage() {
     if (!el.current || map.current) return
     const m = L.map(el.current, { crs: L.CRS.Simple, minZoom: 0, maxZoom: 9, zoomSnap: 0.5, attributionControl: true })
     const bounds = L.latLngBounds([[-TILE, 0], [0, TILE]])
-    L.tileLayer(TILE_URL, { maxNativeZoom: 7, maxZoom: 9, bounds, noWrap: true, tileSize: TILE, attribution: 'Tiles: DZMap loader (private use)' }).addTo(m)
+    L.tileLayer(TILE_URL, { maxNativeZoom: 6, maxZoom: 9, bounds, noWrap: true, tileSize: TILE, attribution: 'Tiles © Xam.nu · DZMap loader (private use)' }).addTo(m)
     m.fitBounds(bounds)
     m.setMaxBounds(bounds.pad(0.2))
     m.on('mousemove', (e: L.LeafletMouseEvent) => {
