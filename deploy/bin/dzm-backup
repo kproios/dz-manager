@@ -1,0 +1,27 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 077
+exec 9>/run/lock/dzm-maintenance.lock
+flock -w 300 9
+[[ ! -f /etc/dzm/dzm.env ]] || source /etc/dzm/dzm.env
+db=/var/lib/dzm/dzm.db
+out=/var/lib/dzm/backups
+tmp=
+cleanup() { [[ -z "$tmp" ]] || rm -f -- "$tmp"; }
+trap cleanup EXIT
+if [[ -f "$db" ]]; then
+    tmp=$(mktemp "$out/.daily.XXXXXX")
+    sqlite3 "$db" ".timeout 30000" ".backup '$tmp'"
+    [[ $(sqlite3 "$tmp" 'PRAGMA integrity_check;') == ok ]]
+    chown dzm:dzm "$tmp"
+    mv -f -- "$tmp" "$out/daily-$(TZ=Europe/Athens date +%Y%m%d).db"
+    tmp=
+    find "$out" -maxdepth 1 -type f -name 'daily-????????.db' -mtime +13 -delete
+    echo 'Daily database snapshot: integrity_check=ok'
+else
+    echo 'No database yet; backup skipped'
+fi
+if [[ -n ${DZM_BACKUP_PING_URL:-} ]]; then
+    # Keep the secret URL out of argv and diagnostics.
+    printf 'url = "%s"\n' "$DZM_BACKUP_PING_URL" | curl --config - --silent --fail --max-time 20 >/dev/null
+fi
