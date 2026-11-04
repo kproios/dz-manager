@@ -83,6 +83,127 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateLockKick(t *testing.T) {
+	s := sched("12:00")
+	s.LockMinutes, s.KickMinutes = 5, 10
+	if err := s.Validate(); err == nil {
+		t.Fatal("kick before lock accepted")
+	}
+	s.LockMinutes, s.KickMinutes, s.KickMessage = 5, 2, "  "
+	if err := s.Validate(); err != nil || s.KickMessage != restarts.DefaultKickMessage {
+		t.Fatalf("defaults: %v %q", err, s.KickMessage)
+	}
+	s.LockMinutes = 31
+	if err := s.Validate(); err == nil {
+		t.Fatal("lock 31 accepted")
+	}
+	s.LockMinutes, s.AnnounceMinutes = 5, []int{1, 15, 5, 15}
+	if err := s.Validate(); err != nil || len(s.AnnounceMinutes) != 3 || s.AnnounceMinutes[0] != 15 {
+		t.Fatalf("announce normalise: %v %v", err, s.AnnounceMinutes)
+	}
+	s.AnnounceText = "Restart at {time} (in {m} min)"
+	at := time.Date(2026, 11, 4, 12, 0, 0, 0, helsinki)
+	if got := s.Announcement(5, at.UTC()); got != "Restart at 12:00 (in 5 min)" {
+		t.Fatalf("announcement %q", got)
+	}
+}
+
+func TestProviderLockKickAndUnlockWhenMissed(t *testing.T) {
+	e, svc, c, sent, id := setup(t)
+	ctx := context.Background()
+	var kicked []string
+	var locks []bool
+	svc.KickAll = func(_ context.Context, reason string) (int, error) { kicked = append(kicked, reason); return 3, nil }
+	svc.OnLock = func(v bool) { locks = append(locks, v) }
+	sc := sched("12:00")
+	sc.ServerID, sc.LockMinutes, sc.KickMinutes, sc.KickMessage = id, 5, 1, "Restarting, back soon"
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	svc.Observe(ctx, id, true)
+	// The provider never restarts: the window closes and DZ Manager unlocks again.
+	for at := time.Date(2026, 11, 4, 11, 50, 0, 0, helsinki); at.Before(time.Date(2026, 11, 4, 12, 5, 0, 0, helsinki)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Tick(ctx)
+	}
+	got := strings.Join(*sent, "|")
+	if !strings.HasPrefix(got, "#lock|say -1 Server locked for the restart at 12:00.") || !strings.HasSuffix(got, "#unlock") {
+		t.Fatalf("sent: %s", got)
+	}
+	if strings.Contains(got, "#shutdown") {
+		t.Fatal("provider mode sent #shutdown")
+	}
+	if len(kicked) != 1 || kicked[0] != "Restarting, back soon" {
+		t.Fatalf("kicked: %v", kicked)
+	}
+	if len(locks) != 2 || !locks[0] || locks[1] {
+		t.Fatalf("lock states: %v", locks)
+	}
+	var n int
+	e.App.DB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action IN ('restart.lock','restart.kick_all','restart.unlock')`).Scan(&n)
+	if n != 3 {
+		t.Fatalf("audit rows = %d", n)
+	}
+}
+
+func TestCountdownRestartAndCancel(t *testing.T) {
+	e, svc, c, sent, id := setup(t)
+	ctx := context.Background()
+	var kicks int
+	svc.KickAll = func(context.Context, string) (int, error) { kicks++; return 1, nil }
+	sc := sched("20:00")
+	sc.ServerID, sc.LockMinutes, sc.KickMinutes = id, 2, 1
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	e.JSON("POST", "/api/restarts/drive-verification", map[string]any{"verified": true, "evidence": "test provider relaunches"}, nil)
+	svc.Observe(ctx, id, true)
+	if code := e.JSON("POST", "/api/restarts/now", map[string]any{"confirm": "RESTART", "delay_minutes": 7}, nil); code != 400 {
+		t.Fatalf("unsupported delay accepted: %d", code)
+	}
+	start := c.now()
+	if code := e.JSON("POST", "/api/restarts/now", map[string]any{"confirm": "RESTART", "delay_minutes": 5}, nil); code != 202 {
+		t.Fatalf("countdown: %d", code)
+	}
+	if len(*sent) != 1 || (*sent)[0] != "say -1 Server restart in 5 minute(s)." {
+		t.Fatalf("first warning: %v", *sent)
+	}
+	if code := e.JSON("POST", "/api/restarts/now", map[string]any{"confirm": "RESTART", "delay_minutes": 1}, nil); code != 409 {
+		t.Fatal("second countdown accepted")
+	}
+	for at := start; !at.After(start.Add(5*time.Minute + 20*time.Second)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Tick(ctx)
+	}
+	got := strings.Join(*sent, "|")
+	if !strings.Contains(got, "#lock") || !strings.HasSuffix(got, "#shutdown") || kicks != 1 {
+		t.Fatalf("countdown sequence: %s (kicks %d)", got, kicks)
+	}
+	if _, pending := svc.PendingManual(ctx, id); pending {
+		t.Fatal("countdown still pending after shutdown")
+	}
+	// A new countdown can be cancelled; the lock it applied is released.
+	svc.Observe(ctx, id, false)
+	svc.Observe(ctx, id, false)
+	svc.Observe(ctx, id, true)
+	*sent = nil
+	start = c.now().Add(10 * time.Minute)
+	c.set(start)
+	e.App.DB.Exec(`DELETE FROM settings WHERE key LIKE 'restart_now_until:%'`)
+	if code := e.JSON("POST", "/api/restarts/now", map[string]any{"confirm": "RESTART", "delay_minutes": 2}, nil); code != 202 {
+		t.Fatalf("second countdown: %d", code)
+	}
+	c.set(start.Add(10 * time.Second))
+	svc.Tick(ctx)
+	if code := e.JSON("POST", "/api/restarts/cancel", nil, nil); code != 200 {
+		t.Fatalf("cancel: %d", code)
+	}
+	got = strings.Join(*sent, "|")
+	if !strings.Contains(got, "#lock") || !strings.Contains(got, "#unlock") || strings.Contains(got, "#shutdown") {
+		t.Fatalf("cancel sequence: %s", got)
+	}
+}
+
 type clock struct {
 	mu sync.Mutex
 	t  time.Time

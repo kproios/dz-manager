@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Modes.
@@ -32,13 +33,36 @@ type Schedule struct {
 	WindowMinutes   int      `json:"window_minutes"`  // planned-restart detection window ±
 	TimeoutMinutes  int      `json:"timeout_minutes"` // alert if not back within
 	DryRun          bool     `json:"dry_run"`         // drive mode: log only
+	// LockMinutes locks the server this many minutes before a restart so nobody
+	// new joins (0 = off; drive mode still locks one minute before).
+	LockMinutes int `json:"lock_minutes"`
+	// KickMinutes kicks every player this many minutes before a restart with
+	// KickMessage, so they log out cleanly (0 = off).
+	KickMinutes int    `json:"kick_minutes"`
+	KickMessage string `json:"kick_message"`
+}
+
+// DefaultKickMessage is shown to kicked players when no message is set.
+const DefaultKickMessage = "Server restarting now. Back in a few minutes."
+
+// Announcement renders the announcement for m minutes before a restart at at.
+// {m} is the minutes left and {time} the restart's local clock time.
+func (s Schedule) Announcement(m int, at time.Time) string {
+	text := s.AnnounceText
+	if !strings.Contains(text, "{m}") {
+		text = "Server restart in {m} minute(s)."
+	}
+	if loc, err := time.LoadLocation(s.Timezone); err == nil {
+		at = at.In(loc)
+	}
+	return strings.NewReplacer("{m}", fmt.Sprint(m), "{time}", at.Format("15:04")).Replace(text)
 }
 
 // Defaults returns a disabled schedule with sensible defaults.
 func Defaults(serverID, tz string) Schedule {
 	return Schedule{ServerID: serverID, Times: []string{"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"}, Timezone: tz,
 		Mode: ModeProvider, AnnounceMinutes: []int{15, 10, 5, 1}, AnnounceText: "Server restart in {m} minute(s).",
-		WindowMinutes: 3, TimeoutMinutes: 10, DryRun: true}
+		WindowMinutes: 3, TimeoutMinutes: 10, DryRun: true, KickMessage: DefaultKickMessage}
 }
 
 type hm struct{ h, m int }
@@ -95,10 +119,40 @@ func (s *Schedule) Validate() error {
 	default:
 		return fmt.Errorf("mode must be %s or %s", ModeProvider, ModeDrive)
 	}
+	if len(s.AnnounceMinutes) > 12 {
+		return errors.New("at most 12 announcement times")
+	}
+	seenMin := map[int]bool{}
+	mins := make([]int, 0, len(s.AnnounceMinutes))
 	for _, m := range s.AnnounceMinutes {
 		if m < 1 || m > 60 {
 			return errors.New("announce minutes must be 1..60")
 		}
+		if !seenMin[m] {
+			seenMin[m] = true
+			mins = append(mins, m)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(mins)))
+	s.AnnounceMinutes = mins
+	if s.LockMinutes < 0 || s.LockMinutes > 30 {
+		return errors.New("lock_minutes must be 0..30")
+	}
+	if s.KickMinutes < 0 || s.KickMinutes > 10 {
+		return errors.New("kick_minutes must be 0..10")
+	}
+	if s.KickMinutes > 0 && s.LockMinutes > 0 && s.KickMinutes > s.LockMinutes {
+		return errors.New("kick players after locking: kick minutes must not be more than lock minutes")
+	}
+	s.KickMessage = strings.TrimSpace(s.KickMessage)
+	if s.KickMessage == "" {
+		s.KickMessage = DefaultKickMessage
+	}
+	if len([]rune(s.KickMessage)) > 120 || strings.IndexFunc(s.KickMessage, unicode.IsControl) >= 0 {
+		return errors.New("kick_message must be one line of at most 120 characters")
+	}
+	if strings.IndexFunc(s.AnnounceText, unicode.IsControl) >= 0 {
+		return errors.New("announce_text must be one line")
 	}
 	if s.WindowMinutes < 1 || s.WindowMinutes > 30 {
 		return errors.New("window_minutes must be 1..30")

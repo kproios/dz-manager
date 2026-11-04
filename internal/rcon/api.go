@@ -1,6 +1,7 @@
 package rcon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,6 +32,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/server/refresh", a.refresh)
 	mux.HandleFunc("POST /api/rcon/say", a.say)
 	mux.HandleFunc("POST /api/rcon/kick", a.kick)
+	mux.HandleFunc("POST /api/rcon/kick-all", a.kickAll)
 	mux.HandleFunc("POST /api/rcon/lock", a.lock(true))
 	mux.HandleFunc("POST /api/rcon/unlock", a.lock(false))
 }
@@ -178,6 +180,62 @@ func (a *API) kick(w http.ResponseWriter, r *http.Request) {
 	a.audited(w, r, "rcon.kick", in.BEGUID, params, err, out)
 }
 
+// KickAll kicks every player in a fresh roster with one reason. It returns how
+// many kicks RCON accepted and the first error, if any.
+func (m *Monitor) KickAll(ctx context.Context, reason string) (int, error) {
+	reason, err := clean(reason, 120)
+	if err != nil {
+		return 0, err
+	}
+	ps, err := m.FreshPlayers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	var first error
+	for _, p := range ps {
+		if _, _, err := m.Exec(ctx, fmt.Sprintf("kick %d %s", p.Number, reason)); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		n++
+	}
+	return n, first
+}
+
+func (a *API) kickAll(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Reason  string `json:"reason"`
+		Confirm string `json:"confirm"`
+	}
+	if err := httpx.Decode(r, 4<<10, &in); err != nil {
+		httpx.Error(w, 400, err.Error())
+		return
+	}
+	if in.Confirm != "KICK" {
+		httpx.Error(w, 400, "type KICK to confirm")
+		return
+	}
+	reason, err := clean(in.Reason, 120)
+	if err != nil {
+		httpx.Error(w, 400, "reason: "+err.Error())
+		return
+	}
+	if !a.dedupe("kick-all") {
+		httpx.Error(w, 409, "identical action sent less than 3 seconds ago")
+		return
+	}
+	n, err := a.Mon.KickAll(r.Context(), reason)
+	params := map[string]any{"reason": reason, "kicked": n}
+	if err != nil && n == 0 {
+		a.audited(w, r, "rcon.kick_all", "all", params, err, nil)
+		return
+	}
+	a.audited(w, r, "rcon.kick_all", "all", params, nil, []byte(fmt.Sprintf("%d player(s) kicked", n)))
+}
+
 func (a *API) lock(locked bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cmd, action := "#unlock", "rcon.unlock"
@@ -190,10 +248,7 @@ func (a *API) lock(locked bool) http.HandlerFunc {
 		}
 		_, out, err := a.Mon.Exec(r.Context(), cmd)
 		if err == nil {
-			a.Mon.mu.Lock()
-			l := locked
-			a.Mon.status.Locked = &l
-			a.Mon.mu.Unlock()
+			a.Mon.SetLocked(locked)
 		}
 		a.audited(w, r, action, "server", nil, err, out)
 	}
