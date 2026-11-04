@@ -22,7 +22,7 @@ import (
 )
 
 // Categories.
-var Categories = []string{"heli_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item"}
+var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag"}
 
 const (
 	defaultTTL   = 3 * time.Hour // fallback end when a despawn is never reported
@@ -34,6 +34,7 @@ var reClass = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{1,63}$`)
 
 // Tracking is the owner-editable configuration rendered into the bridge config.
 type Tracking struct {
+	Revision int64 `json:"revision"`
 	// EventClasses maps an entity classname to a category (e.g. Wreck_UH1Y → heli_crash).
 	EventClasses map[string]string `json:"event_classes"`
 	// RareItems is the allow-list of classnames whose CE spawns are recorded.
@@ -98,7 +99,7 @@ func (s *Service) onStart(ctx context.Context, ev bridge.Event) {
 	// Out-of-order safety: if an end for this key already arrived, keep it ended.
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO map_events(server_id,key,category,class,x,y,z,started_at,last_seen_at,expires_at,status,source,data) VALUES(?,?,?,?,?,?,?,?,?,?, 'active',?,?)
 		ON CONFLICT(server_id,key) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, last_seen_at=excluded.last_seen_at,
-		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class,
+		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class, data=excluded.data,
 		expires_at=CASE WHEN map_events.status='ended' THEN map_events.expires_at ELSE excluded.expires_at END,
 		ended_at=CASE WHEN map_events.status='expired' THEN NULL ELSE map_events.ended_at END,
 		status=CASE WHEN map_events.status='expired' THEN 'active' ELSE map_events.status END
@@ -220,7 +221,7 @@ func (s *Service) allowed(ctx context.Context, class string) bool {
 // BridgeConfig returns the extra keys merged into the generated bridge config.
 func (s *Service) BridgeConfig(ctx context.Context) map[string]any {
 	t := s.LoadTracking(ctx)
-	return map[string]any{"event_classes": t.EventClasses, "rare_items": t.RareItems}
+	return map[string]any{"event_classes": t.EventClasses, "rare_items": t.RareItems, "revision": t.Revision}
 }
 
 // Marker is one map marker.
@@ -237,6 +238,10 @@ type Marker struct {
 	Status      string  `json:"status"` // active | ended | expired | historical
 	Source      string  `json:"source"`
 	Observation string  `json:"observation,omitempty"`
+	Name        string  `json:"name,omitempty"`
+	Kind        string  `json:"kind,omitempty"`
+	Group       string  `json:"group,omitempty"`
+	Radius      float64 `json:"radius,omitempty"`
 }
 
 // Register adds API routes.
@@ -273,7 +278,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(query) + "%"
-	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn') FROM map_events
+	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0) FROM map_events
 		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND expires_at >= ?))
 		AND (?=0 OR id<?) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\')
 		ORDER BY id DESC LIMIT ?`, p.ID, since, now, before, before, query, pattern, limit+1)
@@ -286,7 +291,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m Marker
 		var ended sql.NullString
-		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation); err != nil {
+		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation, &m.Name, &m.Kind, &m.Group, &m.Radius); err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
 		}
@@ -336,6 +341,7 @@ func (s *Service) putTracking(w http.ResponseWriter, r *http.Request) {
 	if t.RareItems == nil {
 		t.RareItems = []string{}
 	}
+	t.Revision = s.LoadTracking(r.Context()).Revision + 1
 	b, _ := json.Marshal(t)
 	if _, err := s.DB.ExecContext(r.Context(), `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, settingsKey, string(b)); err != nil {
 		httpx.Error(w, 500, err.Error())
