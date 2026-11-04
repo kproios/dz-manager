@@ -29,7 +29,7 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Build server-side PBO
         run: bash mod/build.sh "ci-${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
@@ -38,6 +38,9 @@ jobs:
           path: dist/DZMBridge.zip
   secrets:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
