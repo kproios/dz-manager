@@ -101,7 +101,8 @@ func (s *Service) onStart(ctx context.Context, ev bridge.Event) {
 		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class,
 		expires_at=CASE WHEN map_events.status='ended' THEN map_events.expires_at ELSE excluded.expires_at END,
 		ended_at=CASE WHEN map_events.status='expired' THEN NULL ELSE map_events.ended_at END,
-		status=CASE WHEN map_events.status='expired' THEN 'active' ELSE map_events.status END`,
+		status=CASE WHEN map_events.status='expired' THEN 'active' ELSE map_events.status END
+		WHERE map_events.x IS NULL OR excluded.last_seen_at >= map_events.last_seen_at`,
 		ev.ServerID, d.Key, d.Category, trunc(d.Class), ev.Pos.X, ev.Pos.Y, ev.Pos.Z, t, t, ev.Time.Add(ttl).UTC().Format(time.RFC3339), ev.Source, string(ev.Data))
 	if err != nil {
 		s.Log.Error("map event insert", "err", err)
