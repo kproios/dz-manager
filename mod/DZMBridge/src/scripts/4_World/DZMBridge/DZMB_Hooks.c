@@ -94,7 +94,7 @@ modded class ItemBase
 			return;
 		// Position is only final after placement: read it a moment later.
 		string category;
-		if (DZMB_Bridge.EventCategory(this, category))
+		if (DZMB_Bridge.WantsEntity(this))
 			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
 	}
 
@@ -103,6 +103,15 @@ modded class ItemBase
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (b)
 			b.OnEntitySpawned(this);
+	}
+
+	override void EEItemLocationChanged(notnull InventoryLocation oldLoc, notnull InventoryLocation newLoc)
+	{
+		super.EEItemLocationChanged(oldLoc, newLoc);
+		if (!GetGame().IsDedicatedServer() || !DZMB_Bridge.WantsEntity(this)) return;
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge && GetHierarchyParent()) bridge.OnEntityDeleted(this);
+		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
 	}
 
 	override void EEOnCECreate()
@@ -133,7 +142,7 @@ modded class House
 	{
 		super.EEInit();
 		string category;
-		if (GetGame().IsDedicatedServer() && DZMB_Bridge.EventCategory(this, category))
+		if (GetGame().IsDedicatedServer() && DZMB_Bridge.WantsEntity(this))
 			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
 	}
 
@@ -160,13 +169,21 @@ modded class Weapon_Base
 	{
 		super.EEInit();
 		string category;
-		if (GetGame().IsDedicatedServer() && DZMB_Bridge.EventCategory(this, category))
+		if (GetGame().IsDedicatedServer() && DZMB_Bridge.WantsEntity(this))
 			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitEvent, 1000, false);
 	}
 	void DZMB_EmitEvent()
 	{
 		DZMB_Bridge bridge = DZMB_Bridge.Get();
 		if (bridge) bridge.OnEntitySpawned(this);
+	}
+	override void EEItemLocationChanged(notnull InventoryLocation oldLoc, notnull InventoryLocation newLoc)
+	{
+		super.EEItemLocationChanged(oldLoc, newLoc);
+		if (!GetGame().IsDedicatedServer() || !DZMB_Bridge.WantsEntity(this)) return;
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge && GetHierarchyParent()) bridge.OnEntityDeleted(this);
+		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitEvent, 1000, false);
 	}
 	override void EEDelete(EntityAI parent)
 	{

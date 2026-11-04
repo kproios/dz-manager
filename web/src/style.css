@@ -86,6 +86,25 @@ blockquote { border-left: 3px solid var(--line); margin: 0; padding: 4px 12px; }
 .inspector .right { float: right; }
 .legend { display: flex; gap: 14px; padding: 6px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.entity-pin { color: #ffe29a; background: #17212c; border: 1px solid currentColor; border-radius: 6px; padding: 4px; box-shadow: 0 2px 5px #0008; }
+.entity-pin svg, .map-key svg { display: block; width: 100%; height: 100%; }
+.icon-heli, .icon-plane { color: #ffb3a7; }
+.icon-convoy, .icon-train { color: #ffc987; }
+.icon-police { color: #9bcfff; }
+.icon-car, .icon-bike, .icon-boat { color: #ffe29a; }
+.icon-item, .icon-weapon { color: #b7e7f5; }
+.icon-flag { color: #d1bbff; }
+.icon-airdrop { color: #ffb9e1; }
+.entity-pin.is-muted { opacity: .55; }
+.map-count { position: absolute; right: -8px; top: -9px; min-width: 17px; padding: 0 3px; border-radius: 5px; background: #f0f4f8; color: #141b23; font-size: 11px; font-weight: 700; text-align: center; }
+.map-key { display: inline-flex; gap: 6px; align-items: center; padding: 5px 7px; background: transparent; border: 1px solid transparent; font-size: 12px; }
+.map-key > span { width: 20px; height: 20px; }
+.map-key[aria-pressed="false"] { opacity: .5; text-decoration: line-through; }
+.map-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.map-key:hover { border-color: var(--line); }
+.inspector { max-height: calc(100% - 24px); overflow: auto; max-width: calc(100% - 24px); }
+.inspector dd { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .legend { gap: 3px 7px; padding: 5px 8px; } .mapbar { gap: 7px 12px; padding: 8px; } .mapbody { min-height: 280px; } }
 .leaflet-tooltip.lbl { background: rgba(0, 0, 0, 0.65); color: #fff; border: 0; box-shadow: none; padding: 1px 5px; font-size: 11px; }
 .leaflet-tooltip.lbl::before { display: none; }
 .log-filters { align-items: end; margin-bottom: 18px; }
