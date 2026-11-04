@@ -76,6 +76,7 @@ export default function Settings() {
         ) : <p className="muted">Not connected. Download DZMBridge.zip from the latest GitHub release, install it as a server mod, and paste the config from "Connect…". The game-side PBO is not auto-updated: compare the installed version with the latest release after each update.</p>}
       </Card>
       <Tracking />
+      {!!bridge.data?.info?.tracking_invalid?.length && <p className="warnings">These tracking classes do not exist in the server’s loaded mods: {bridge.data.info.tracking_invalid.join(', ')}. Correct their classnames above.</p>}
       <PriorityQueue />
       {edit && (
         <Confirm title={edit.id ? 'Edit server' : 'Add server'} onClose={() => setEdit(null)} onConfirm={save} body={
@@ -133,17 +134,17 @@ function Tracking() {
     }
     try {
       await api.put('/api/settings/tracking', { event_classes, rare_items: its.split(/\s+/).filter(Boolean) })
-      notify('Saved. Re-open "Connect…" and update the bridge config on the server.')
+      notify('Saved. The connected bridge will apply tracking automatically (version 0.1.4 or newer).')
       t.reload()
     } catch (e: any) { notify(e.message, 'bad') }
   }
   return (
     <Card title="Event & rare-item tracking">
       <div className="grid">
-        <label>Event entity classes (<code>Class=category</code>; categories: heli_crash, airdrop, loot_box, custom)
+        <label>Event entity classes (<code>Class=category</code>; categories: heli_crash, airdrop, loot_box, military_convoy, police, train, custom)
           <textarea rows={6} value={cls} onChange={(e) => setClasses(e.target.value)} />
         </label>
-        <label>Rare item classnames (one per line; only Central Economy spawns of these are recorded)
+        <label>Tracked item classnames (one per line; CE spawns and first observations of existing ground items)
           <textarea rows={6} value={its} onChange={(e) => setItems(e.target.value)} />
         </label>
       </div>

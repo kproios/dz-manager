@@ -22,7 +22,7 @@ import (
 )
 
 // Categories.
-var Categories = []string{"heli_crash", "airdrop", "loot_box", "custom", "rare_item"}
+var Categories = []string{"heli_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item"}
 
 const (
 	defaultTTL   = 3 * time.Hour // fallback end when a despawn is never reported
@@ -61,9 +61,9 @@ func (s *Service) Attach(b *bridge.Bridge) {
 	if s.Now == nil {
 		s.Now = time.Now
 	}
-	b.Subscribe(s.onStart, "event.start")
+	b.Subscribe(s.onStart, "event.start", "event.seen")
 	b.Subscribe(s.onEnd, "event.end")
-	b.Subscribe(s.onItem, "item.spawn")
+	b.Subscribe(s.onItem, "item.spawn", "item.observed")
 	b.Subscribe(s.onServerStart, "server.start")
 }
 
@@ -98,7 +98,10 @@ func (s *Service) onStart(ctx context.Context, ev bridge.Event) {
 	// Out-of-order safety: if an end for this key already arrived, keep it ended.
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO map_events(server_id,key,category,class,x,y,z,started_at,last_seen_at,expires_at,status,source,data) VALUES(?,?,?,?,?,?,?,?,?,?, 'active',?,?)
 		ON CONFLICT(server_id,key) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, last_seen_at=excluded.last_seen_at,
-		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class`,
+		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class,
+		expires_at=CASE WHEN map_events.status='ended' THEN map_events.expires_at ELSE excluded.expires_at END,
+		ended_at=CASE WHEN map_events.status='expired' THEN NULL ELSE map_events.ended_at END,
+		status=CASE WHEN map_events.status='expired' THEN 'active' ELSE map_events.status END`,
 		ev.ServerID, d.Key, d.Category, trunc(d.Class), ev.Pos.X, ev.Pos.Y, ev.Pos.Z, t, t, ev.Time.Add(ttl).UTC().Format(time.RFC3339), ev.Source, string(ev.Data))
 	if err != nil {
 		s.Log.Error("map event insert", "err", err)
@@ -221,17 +224,18 @@ func (s *Service) BridgeConfig(ctx context.Context) map[string]any {
 
 // Marker is one map marker.
 type Marker struct {
-	ID        int64   `json:"id"`
-	Key       string  `json:"key"`
-	Category  string  `json:"category"`
-	Class     string  `json:"class"`
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Z         float64 `json:"z"`
-	StartedAt string  `json:"started_at"`
-	EndedAt   *string `json:"ended_at,omitempty"`
-	Status    string  `json:"status"` // active | ended | expired | historical
-	Source    string  `json:"source"`
+	ID          int64   `json:"id"`
+	Key         string  `json:"key"`
+	Category    string  `json:"category"`
+	Class       string  `json:"class"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	Z           float64 `json:"z"`
+	StartedAt   string  `json:"started_at"`
+	EndedAt     *string `json:"ended_at,omitempty"`
+	Status      string  `json:"status"` // active | ended | expired | historical
+	Source      string  `json:"source"`
+	Observation string  `json:"observation,omitempty"`
 }
 
 // Register adds API routes.
@@ -244,15 +248,34 @@ func (s *Service) Register(mux *http.ServeMux) {
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	p, _, err := s.Profiles.Active(r.Context())
 	if err != nil {
+		if r.URL.Query().Get("paged") == "true" {
+			httpx.JSON(w, 200, map[string]any{"items": []Marker{}, "next_before": 0})
+			return
+		}
 		httpx.JSON(w, 200, []Marker{})
 		return
 	}
 	s.Sweep(r.Context())
 	since := s.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	now := s.Now().UTC().Format(time.RFC3339)
-	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source FROM map_events
+	paged := r.URL.Query().Get("paged") == "true"
+	limit, before, query := 500, 0, ""
+	if paged {
+		limit = httpx.QueryInt(r, "limit", 25)
+		if limit < 1 || limit > 100 {
+			limit = 25
+		}
+		before = httpx.QueryInt(r, "before", 0)
+		query = strings.TrimSpace(r.URL.Query().Get("q"))
+		if len(query) > 200 {
+			query = query[:200]
+		}
+	}
+	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(query) + "%"
+	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn') FROM map_events
 		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND expires_at >= ?))
-		ORDER BY started_at DESC LIMIT 500`, p.ID, since, now)
+		AND (?=0 OR id<?) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\')
+		ORDER BY id DESC LIMIT ?`, p.ID, since, now, before, before, query, pattern, limit+1)
 	if err != nil {
 		httpx.Error(w, 500, err.Error())
 		return
@@ -262,7 +285,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m Marker
 		var ended sql.NullString
-		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source); err != nil {
+		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation); err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
 		}
@@ -270,6 +293,19 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 			m.EndedAt = &ended.String
 		}
 		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Error(w, 500, err.Error())
+		return
+	}
+	var next int64
+	if len(out) > limit {
+		out = out[:limit]
+		next = out[limit-1].ID
+	}
+	if paged {
+		httpx.JSON(w, 200, map[string]any{"items": out, "next_before": next})
+		return
 	}
 	httpx.JSON(w, 200, out)
 }
@@ -308,6 +344,6 @@ func (s *Service) putTracking(w http.ResponseWriter, r *http.Request) {
 	if u := auth.FromContext(r.Context()); u != nil {
 		a = u.Actor()
 	}
-	_ = s.Audit.Write(r.Context(), a, "settings.tracking_update", "", t, "ok", "regenerate the bridge config from the connect wizard to apply")
+	_ = s.Audit.Write(r.Context(), a, "settings.tracking_update", "", t, "ok", "sent on the bridge's next command poll (requires an up-to-date bridge)")
 	httpx.JSON(w, 200, t)
 }

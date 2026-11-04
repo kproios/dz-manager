@@ -69,6 +69,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 		Publish: func() { srv.Hub.Publish("map_events", map[string]bool{"changed": true}) }}
 	a.MapEvents.Attach(a.Bridge)
 	a.MapEvents.Register(srv.API)
+	a.Bridge.Tracking = func(ctx context.Context) any { return a.MapEvents.LoadTracking(ctx) }
 	a.BridgeExtras = append(a.BridgeExtras, a.MapEvents.BridgeConfig)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "map-events", a.MapEvents.Run) })
 	a.Bans = &bans.Service{DB: a.DB, Audit: srv.Audit, Players: a.Players, RCON: a.RCON, Roster: rconRoster{a.RCON}}

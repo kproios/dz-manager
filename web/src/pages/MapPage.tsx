@@ -6,9 +6,10 @@ import { Badge } from '../ui'
 import { ago, fromLatLng, grid, pct, toLatLng, TILE } from '../util'
 
 const TILE_URL = '/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp'
-const catColor: Record<string, string> = { heli_crash: '#e67e22', airdrop: '#3498db', loot_box: '#9b59b6', custom: '#1abc9c', rare_item: '#f1c40f' }
+const catColor: Record<string, string> = { heli_crash: '#e67e22', airdrop: '#3498db', loot_box: '#9b59b6', military_convoy:'#db8454',police:'#6cb4ff',train:'#d987be', custom: '#1abc9c', rare_item: '#f1c40f' }
 
 type Sel = { kind: 'player'; p: MzPlayer } | { kind: 'vehicle'; v: MzVehicle } | { kind: 'event'; m: Marker } | null
+function tooltip(text:string) { const node=document.createElement('span');node.textContent=text;return node }
 
 export default function MapPage() {
   const state = useApi<MapState>('/api/map/state', ['map'], 15000)
@@ -52,13 +53,13 @@ export default function MapPage() {
     const stale = !data.fresh
     if (show.players) for (const p of data.players ?? []) {
       const mk = L.circleMarker(toLatLng(p.x, p.z), { radius: 6, color: '#fff', weight: 1.5, fillColor: stale ? '#888' : p.unconscious ? '#e74c3c' : '#2ecc71', fillOpacity: 0.95 })
-      if (labels) mk.bindTooltip(p.name || p.steam64, { permanent: true, direction: 'right', className: 'lbl' })
+      if (labels) mk.bindTooltip(tooltip(p.name || p.steam64), { permanent: true, direction: 'right', className: 'lbl' })
       mk.on('click', () => setSel({ kind: 'player', p }))
       mk.addTo(g.players)
     }
     if (show.vehicles) for (const v of data.vehicles ?? []) {
       const mk = L.circleMarker(toLatLng(v.x, v.z), { radius: 5, color: '#000', weight: 1, fillColor: stale ? '#888' : v.engine_on ? '#f39c12' : '#95a5a6', fillOpacity: 0.9 })
-      mk.bindTooltip(v.class, { direction: 'top' })
+      mk.bindTooltip(tooltip(v.class), { direction: 'top' })
       mk.on('click', () => setSel({ kind: 'vehicle', v }))
       mk.addTo(g.vehicles)
     }
@@ -89,7 +90,7 @@ export default function MapPage() {
         {data && (data.available
           ? <Badge state={data.fresh ? 'ok' : 'stale'}>{data.fresh ? 'live' : 'stale'} · {ago(data.received_at)}</Badge>
           : <Badge state="unconfigured">no MetricZ data</Badge>)}
-        <span>{data?.players?.length ?? 0} players · {data?.vehicles?.length ?? 0} vehicles · {events.data?.filter((m) => m.status === 'active').length ?? 0} active events</span>
+        <span>{data?.players?.length ?? 0} players · {data?.vehicles?.length ?? 0} vehicles · {events.data?.filter((m) => m.status === 'active').length ?? 0} active event markers</span>
         <label><input type="checkbox" checked={show.players} onChange={() => toggle('players')} /> players</label>
         <label><input type="checkbox" checked={labels} onChange={() => setLabels(!labels)} /> names</label>
         <label><input type="checkbox" checked={show.vehicles} onChange={() => toggle('vehicles')} /> vehicles</label>
@@ -108,7 +109,7 @@ export default function MapPage() {
         <span><i style={{ background: '#2ecc71' }} /> player</span><span><i style={{ background: '#e74c3c' }} /> unconscious</span>
         <span><i style={{ background: '#f39c12' }} /> vehicle (engine on)</span><span><i style={{ background: '#95a5a6' }} /> vehicle</span>
         {Object.entries(catColor).map(([k, c]) => <span key={k}><i style={{ background: c }} /> {k.replace('_', ' ')}</span>)}
-        <span className="muted">Rare items are spawn records ("spawned at"), never a current location. No AI, infected or position history is tracked.</span>
+        <span className="muted">Item markers record a spawn or first ground observation; they are not a current inventory location.</span>
       </div>
     </div>
   )
@@ -151,7 +152,7 @@ function Inspector({ sel, onClose }: { sel: NonNullable<Sel>; onClose: () => voi
           <dl>
             <dt>Status</dt><dd><Badge state={sel.m.status} /></dd>
             <dt>Class</dt><dd>{sel.m.class || '—'}</dd>
-            <dt>{sel.m.category === 'rare_item' ? 'Spawned at' : 'Started'}</dt><dd>{new Date(sel.m.started_at).toLocaleString()}</dd>
+            <dt>{sel.m.category === 'rare_item' ? sel.m.observation === 'item.observed' ? 'First observed' : 'Spawned at' : 'Started'}</dt><dd>{new Date(sel.m.started_at).toLocaleString()}</dd>
             {sel.m.ended_at && <><dt>Ended</dt><dd>{new Date(sel.m.ended_at).toLocaleString()}</dd></>}
             <dt>Position</dt><dd>{sel.m.x.toFixed(0)} / {sel.m.z.toFixed(0)} ({grid(sel.m.x, sel.m.z)})</dd>
             <dt>Source</dt><dd>{sel.m.source}</dd>

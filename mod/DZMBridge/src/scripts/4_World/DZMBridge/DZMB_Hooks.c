@@ -93,7 +93,8 @@ modded class ItemBase
 		if (!b)
 			return;
 		// Position is only final after placement: read it a moment later.
-		if (DZMB_Config.Get().event_classes.Contains(GetType()))
+		string category;
+		if (DZMB_Bridge.EventCategory(this, category))
 			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
 	}
 
@@ -107,6 +108,11 @@ modded class ItemBase
 	override void EEOnCECreate()
 	{
 		super.EEOnCECreate();
+		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitCE, 1000, false);
+	}
+
+	void DZMB_EmitCE()
+	{
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (b && DZMB_Config.Get().rare_items.Count() > 0)
 			b.OnCESpawn(this);
@@ -126,7 +132,8 @@ modded class House
 	override void EEInit()
 	{
 		super.EEInit();
-		if (GetGame().IsDedicatedServer() && DZMB_Config.Get().event_classes.Contains(GetType()))
+		string category;
+		if (GetGame().IsDedicatedServer() && DZMB_Bridge.EventCategory(this, category))
 			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
 	}
 
@@ -143,5 +150,38 @@ modded class House
 		if (bridge && GetGame().IsDedicatedServer())
 			bridge.OnEntityDeleted(this);
 		super.EEDelete(parent);
+	}
+}
+
+// Weapons do not inherit the script-level ItemBase.
+modded class Weapon_Base
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		string category;
+		if (GetGame().IsDedicatedServer() && DZMB_Bridge.EventCategory(this, category))
+			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitEvent, 1000, false);
+	}
+	void DZMB_EmitEvent()
+	{
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge) bridge.OnEntitySpawned(this);
+	}
+	override void EEDelete(EntityAI parent)
+	{
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge && GetGame().IsDedicatedServer()) bridge.OnEntityDeleted(this);
+		super.EEDelete(parent);
+	}
+	override void EEOnCECreate()
+	{
+		super.EEOnCECreate();
+		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitCE, 1000, false);
+	}
+	void DZMB_EmitCE()
+	{
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge) bridge.OnCESpawn(this);
 	}
 }

@@ -56,6 +56,14 @@ func New(s *Server) *Server {
 	s.API.HandleFunc("GET /api/me", s.me)
 	s.API.HandleFunc("GET /api/status", s.status)
 	s.API.HandleFunc("GET /api/audit", s.auditList)
+	s.API.HandleFunc("GET /api/audit/search", func(w http.ResponseWriter, r *http.Request) {
+		page, err := s.Audit.Search(r.Context(), httpx.QueryInt(r, "limit", 25), int64(httpx.QueryInt(r, "before", 0)), r.URL.Query().Get("q"), r.URL.Query().Get("result"))
+		if err != nil {
+			httpx.Error(w, 500, err.Error())
+			return
+		}
+		httpx.JSON(w, 200, page)
+	})
 	s.API.HandleFunc("GET /api/capabilities", s.capabilities)
 	s.API.Handle("GET /api/stream", s.Hub)
 	s.API.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })

@@ -39,19 +39,24 @@ export function useApi<T>(path: string | null, events: string[] = [], intervalMs
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const timer = useRef<number | undefined>(undefined)
+  const generation = useRef(0)
   const load = useCallback(async () => {
     if (!path) return
+    const current=++generation.current
     setLoading(true)
     try {
-      setData(await api.get<T>(path))
+      const next=await api.get<T>(path)
+      if(current!==generation.current)return
+      setData(next)
       setError(null)
     } catch (e: any) {
+      if(current!==generation.current)return
       setError(e.message)
     } finally {
-      setLoading(false)
+      if(current===generation.current)setLoading(false)
     }
   }, [path])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { setData(null);load();return()=>{generation.current++;window.clearTimeout(timer.current)} }, [load])
   useEffect(() => {
     if (!intervalMs) return
     const t = window.setInterval(load, intervalMs)

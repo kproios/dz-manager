@@ -67,7 +67,7 @@ export interface MapState {
   players: MzPlayer[] | null; vehicles: MzVehicle[] | null
   perf?: { fps?: number; fps_avg?: number; fps_min?: number; players?: number; infected?: number; animals?: number; items?: number; vehicles: number; uptime_seconds?: number }
 }
-export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; ended_at?: string; status: string; source: string }
+export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; ended_at?: string; status: string; source: string; observation?: string }
 export interface Player {
   steam64: string; be_guid: string; dayz_id: string; name: string; first_seen: string; last_seen: string
   playtime_seconds: number; kills: number; deaths: number; id_mismatch: boolean
