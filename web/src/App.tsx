@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { api, Me, setCSRF } from './api'
 import { useHashRoute } from './hooks'
 import { Toast } from './ui'
+import { Icon, IconName } from './icons'
 import Dashboard from './pages/Dashboard'
 import MapPage from './pages/MapPage'
 import Players from './pages/Players'
@@ -16,9 +17,9 @@ type Notify = (msg: string, kind?: 'ok' | 'bad') => void
 const NotifyCtx = createContext<Notify>(() => {})
 export const useNotify = () => useContext(NotifyCtx)
 
-const nav: [string, string][] = [
-  ['dashboard', 'Dashboard'], ['map', 'Live map'], ['players', 'Players'], ['events', 'Events'],
-  ['restarts', 'Restarts'], ['bans', 'Bans'], ['settings', 'Settings'], ['audit', 'Audit'],
+const nav: [string, string, IconName][] = [
+  ['dashboard', 'Dashboard', 'dashboard'], ['map', 'Live map', 'map'], ['players', 'Players', 'players'], ['events', 'Events', 'events'],
+  ['restarts', 'Restarts', 'restarts'], ['bans', 'Bans', 'bans'], ['settings', 'Settings', 'settings'], ['audit', 'Audit log', 'audit'],
 ]
 
 export default function App() {
@@ -56,15 +57,15 @@ export default function App() {
     <NotifyCtx.Provider value={notify}>
       <div className={'layout' + (route === 'map' ? ' wide' : '')}>
         <aside>
-          <div className="brand">DZ Manager</div>
+          <div className="brand"><Icon name="logo" />DZ Manager</div>
           <nav>
-            {nav.map(([k, label]) => (
-              <a key={k} href={'#/' + k} className={route === k ? 'active' : ''}>{label}</a>
+            {nav.map(([k, label, icon]) => (
+              <a key={k} href={'#/' + k} className={route === k ? 'active' : ''} aria-current={route === k ? 'page' : undefined}><Icon name={icon} />{label}</a>
             ))}
           </nav>
           <div className="me">
             <div className="small muted">Signed in via Authentik</div>
-            <div>{me.username}</div>
+            <div className="who" title={me.email || me.username}>{me.username}</div>
             <form method="post" action="/auth/logout">
               <button className="link">Sign out</button>
             </form>

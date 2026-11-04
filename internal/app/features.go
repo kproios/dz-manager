@@ -36,6 +36,8 @@ func (a *App) registerFeatures(ctx context.Context) error {
 
 	// #4 restart observation (provider is the authority).
 	a.Restarts.Exec = func(ctx context.Context, cmd string) error { _, _, err := a.RCON.Exec(ctx, cmd); return err }
+	a.Restarts.KickAll = a.RCON.KickAll
+	a.Restarts.OnLock = a.RCON.SetLocked
 	a.Restarts.Register(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "restarts", a.Restarts.Run) })
 

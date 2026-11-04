@@ -402,6 +402,20 @@ func (m *Monitor) Exec(ctx context.Context, cmd string) (serverID string, out []
 	return p.ID, out, err
 }
 
+// SetLocked records the join-lock state DZ Manager last applied (RCON cannot
+// read it back). A restarted DayZ server always starts unlocked.
+func (m *Monitor) SetLocked(locked bool) {
+	m.mu.Lock()
+	l := locked
+	m.status.Locked = &l
+	s := m.status
+	s.Players = append([]Player(nil), m.status.Players...)
+	m.mu.Unlock()
+	if m.Publish != nil && s.ServerID != "" {
+		m.Publish(s)
+	}
+}
+
 // FreshPlayers re-reads the roster from RCON (used to resolve targets at execution time).
 func (m *Monitor) FreshPlayers(ctx context.Context) ([]Player, error) {
 	p, sec, err := m.Profiles.Active(ctx)
