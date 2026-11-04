@@ -9,10 +9,12 @@ import (
 
 	"github.com/kproios/dz-manager/internal/alert"
 	"github.com/kproios/dz-manager/internal/audit"
+	"github.com/kproios/dz-manager/internal/bridge"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/config"
 	"github.com/kproios/dz-manager/internal/metricz"
+	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/restarts"
@@ -33,6 +35,8 @@ type App struct {
 	MetricZ  *metricz.Receiver
 	Restarts *restarts.Service
 	Alert    *alert.Sender
+	Bridge   *bridge.Bridge
+	Players  *players.Service
 
 	starters        []func(context.Context)
 	onProfileChange []func()
