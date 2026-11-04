@@ -14,4 +14,6 @@ A single world census after CE startup, or following an operator's tracking chan
 
 Map coordinates are DayZ east/north metres. The MetricZ wizard sets `geo.disable_transform_coordinates=true` and enables height export. The receiver also accepts horizontal X/Z without altitude, matching upstream's default disabled height metrics; repeated X samples cannot stand in for missing Z.
 
+Seen messages update the current marker without creating raw activity rows. They are idempotent by marker key and timestamp; an older replay cannot move its position or last-seen time backwards. This keeps the database and its daily snapshots bounded by actual activity, rather than one row per object per minute.
+
 The server-side PBO remains separate from upstream MetricZ, which is unmodified. No AI/infected markers or continuous player-location history are stored.
