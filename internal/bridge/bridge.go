@@ -259,6 +259,13 @@ func (b *Bridge) Ingest(ctx context.Context, serverID string, env Envelope) (Res
 			continue
 		}
 		ev.ServerID, ev.Source, ev.Time = serverID, source, t.UTC()
+		// A seen message refreshes the current marker. It is not a new activity
+		// and must not grow 90 days of per-object history (or daily DB copies).
+		if ev.Type == "event.seen" {
+			res.Accepted++
+			fresh = append(fresh, ev)
+			continue
+		}
 		var x, y, z any
 		if ev.Pos != nil {
 			x, y, z = ev.Pos.X, ev.Pos.Y, ev.Pos.Z
@@ -279,7 +286,7 @@ func (b *Bridge) Ingest(ctx context.Context, serverID string, env Envelope) (Res
 	for _, ev := range fresh {
 		b.dispatch(ctx, ev)
 	}
-	if len(fresh) > 0 && b.Publish != nil {
+	if len(types) > 0 && b.Publish != nil {
 		ts := make([]string, 0, len(types))
 		for t := range types {
 			ts = append(ts, t)
