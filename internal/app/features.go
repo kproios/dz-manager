@@ -10,6 +10,7 @@ import (
 	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
+	"github.com/kproios/dz-manager/internal/priority"
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/restarts"
 )
@@ -72,6 +73,9 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "map-events", a.MapEvents.Run) })
 	a.Bans = &bans.Service{DB: a.DB, Audit: srv.Audit, Players: a.Players, RCON: a.RCON, Roster: rconRoster{a.RCON}}
 	a.Bans.Register(srv.API)
+
+	// #13 priority queue, phase 1 (list + export; the provider applies it).
+	(&priority.API{DB: a.DB, Audit: srv.Audit}).Register(srv.API)
 
 	_ = ctx
 	return nil
