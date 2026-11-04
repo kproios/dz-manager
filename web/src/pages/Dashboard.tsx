@@ -26,7 +26,7 @@ export default function Dashboard() {
             <dl>
               <dt>Query (A2S)</dt><dd><Badge state={s.query.state} /> <span className="small muted">{s.query.error}</span></dd>
               <dt>RCON</dt><dd><Badge state={s.rcon.state} /> <span className="small muted">{s.rcon.error}</span></dd>
-              <dt>Players</dt><dd>{s.info ? `${s.info.players} / ${s.info.max_players}` : '—'} {s.rcon.state === 'ok' && <span className="muted small">(RCON roster: {s.players.length})</span>}</dd>
+              <dt>Players</dt><dd>{s.info ? `${s.info.players} / ${s.info.max_players}` : '—'} {s.rcon.state === 'ok' && <span className="muted small">(RCON roster: {s.players?.length ?? 0})</span>}</dd>
               <dt>Map / version</dt><dd>{s.info ? `${s.info.map} · ${s.info.version}` : '—'}</dd>
               <dt>Latency</dt><dd>{s.info ? `${s.info.latency_ms} ms` : '—'}</dd>
               <dt>Locked</dt><dd>{s.locked == null ? 'unknown' : s.locked ? 'yes' : 'no'}</dd>

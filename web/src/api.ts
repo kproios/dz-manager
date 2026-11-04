@@ -53,7 +53,7 @@ export interface Profile {
 export interface Link { state: string; error?: string; last_ok?: string }
 export interface RconPlayer { number: number; name: string; be_guid: string; verified: boolean; lobby: boolean; ping: number; ip?: string }
 export interface ServerStatus {
-  server_id: string; query: Link; rcon: Link; players: RconPlayer[]; locked?: boolean; updated_at: string
+  server_id: string; query: Link; rcon: Link; players: RconPlayer[] | null; locked?: boolean; updated_at: string
   info?: { name: string; map: string; players: number; max_players: number; version: string; latency_ms: number }
 }
 export interface MzPlayer {
@@ -64,7 +64,7 @@ export interface MzPlayer {
 export interface MzVehicle { id: string; class: string; type: string; x: number; y: number; z: number; health?: number; fuel?: number; crew?: number; speed?: number; engine_on?: boolean }
 export interface MapState {
   server_id: string; available: boolean; fresh: boolean; received_at?: string; reason?: string
-  players: MzPlayer[]; vehicles: MzVehicle[]
+  players: MzPlayer[] | null; vehicles: MzVehicle[] | null
   perf?: { fps?: number; fps_avg?: number; fps_min?: number; players?: number; infected?: number; animals?: number; items?: number; vehicles: number; uptime_seconds?: number }
 }
 export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; ended_at?: string; status: string; source: string }
