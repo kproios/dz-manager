@@ -1,0 +1,1 @@
+This placeholder keeps go:embed happy before the UI is built.
