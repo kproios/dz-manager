@@ -107,7 +107,7 @@ func Validate(action string, in Request) (map[string]any, error) {
 			if *in.Y < -50 || *in.Y > 1500 {
 				return nil, errors.New("y out of range")
 			}
-			p["y"] = *in.Y
+			p["y"], p["has_y"] = *in.Y, true
 		}
 	case "give_item":
 		if !reClass.MatchString(in.Class) {
@@ -120,7 +120,8 @@ func Validate(action string, in Request) (map[string]any, error) {
 		if q < 1 || q > 20 {
 			return nil, errors.New("quantity must be 1..20")
 		}
-		p["class"], p["quantity"] = in.Class, q
+		// "item", not "class": class is a reserved word in Enforce Script.
+		p["item"], p["quantity"] = in.Class, q
 	}
 	return p, nil
 }

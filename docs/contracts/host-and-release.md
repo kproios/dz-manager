@@ -16,7 +16,7 @@ the app works, and the app does not need to know how the host was built.
 | Assets | `dzm_linux_amd64.tar.gz`, `dzm_linux_arm64.tar.gz`, `SHA256SUMS` (exact names, no version in the file name). The updater ignores any other assets. |
 | Game-side asset | `DZMBridge.zip`: the server-side mod folder `@DZMBridge/` (`addons/DZMBridge.pbo`, `mod.cpp`), built by CI. **Unsigned** (server-side mods loaded with `-servermod` need no `.bisign`). The owner installs it on the game server by hand. The host updater never touches it. |
 | Tarball layout | `dzm` (static binary, CGO disabled), `VERSION` (single line, equals the tag, e.g. `v0.3.1`), `LICENSES/` (third-party notices). Nothing else is required. |
-| `SHA256SUMS` | `sha256sum` format, one line per tarball. |
+| `SHA256SUMS` | `sha256sum` format, one line per asset (tarballs and `DZMBridge.zip`). |
 
 No signing key. Integrity comes from HTTPS + an authenticated download from a private repo +
 `SHA256SUMS`. A signing key would live in the same GitHub account, so it would add work without

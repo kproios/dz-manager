@@ -120,7 +120,7 @@ func TestActions(t *testing.T) {
 	if code := e.JSON("POST", "/api/players/76561198999999999/actions/heal", map[string]any{}, nil); code != 404 {
 		t.Fatalf("unknown player = %d", code)
 	}
-	if len(got) != 3 || got[1].Target != steamA || !strings.Contains(string(got[1].Params), `"x":7000`) {
+	if len(got) != 3 || got[1].Target != steamA || !strings.Contains(string(got[1].Params), `"x":7000`) || !strings.Contains(string(got[2].Params), `"item":"M4A1"`) {
 		t.Fatalf("commands seen by mod: %+v", got)
 	}
 	var n int
