@@ -1,0 +1,202 @@
+#!/bin/bash
+# Root-only updater. No credentials in argv, output, release directories or status.
+set -Eeuo pipefail
+umask 077
+exec 9>/run/lock/dzm-maintenance.lock
+flock -w 300 9
+[[ ! -f /etc/dzm/updater.env ]] || source /etc/dzm/updater.env
+[[ ! -f /etc/dzm/dzm.env ]] || source /etc/dzm/dzm.env
+root=/opt/dzm
+data=/var/lib/dzm
+status=$data/updater/status.json
+work=$(mktemp -d /opt/dzm/.update.XXXXXX)
+installed=
+[[ ! -f $root/current/VERSION ]] || installed=$(cat "$root/current/VERSION")
+latest= expires= error= result=download_failed
+blocked='[]'
+switched=0
+previous=
+had_db=0
+snapshot=
+if [[ -f $status ]]; then
+    # Preserve blocked versions; never silently reset a damaged state file.
+    if jq -e '(.blocked_versions | type) == "array"' "$status" >/dev/null 2>&1; then
+        blocked=$(jq -ce '.blocked_versions' "$status")
+        expires=$(jq -r '.token_expires_at // ""' "$status")
+        latest=$(jq -r '.latest_seen // ""' "$status")
+    else
+        result=verify_failed
+        error='Updater state is invalid; recover blocked_versions from backup before updating'
+        install -m 0600 "$status" /etc/dzm/updater-state.corrupt
+        touch /etc/dzm/hold
+    fi
+fi
+write_status() {
+    local tmp
+    tmp=$(mktemp "$data/updater/.status.XXXXXX")
+    jq -n --arg checked "$(date -u +%FT%TZ)" --arg installed "$installed" \
+       --arg latest "$latest" --arg result "$result" --arg error "$error" \
+       --arg expires "$expires" --argjson blocked "$blocked" \
+       '{checked_at:$checked,installed:$installed,latest_seen:$latest,last_result:$result,last_error:$error,blocked_versions:$blocked,token_expires_at:$expires}' >"$tmp"
+    chown root:dzm "$tmp"
+    chmod 0640 "$tmp"
+    mv -fT "$tmp" "$status"
+    echo "dzm-update: result=$result installed=$installed latest=$latest${error:+ error=$error}"
+}
+alert() {
+    [[ -n ${DZM_ALERT_WEBHOOK:-} ]] || return 0
+    # JSON content works with Discord; ntfy also accepts the posted message body.
+    jq -n --arg content "DZ Manager: $result ($latest): $error" '{content:$content}' >"$work/alert.json"
+    printf 'url = "%s"\n' "$DZM_ALERT_WEBHOOK" | curl --config - --silent --fail \
+        --max-time 20 -H 'Content-Type: application/json' --data-binary "@$work/alert.json" >/dev/null || echo 'Alert delivery failed'
+}
+link_release() {
+    ln -s "$1" "$root/.current.$$"
+    mv -fT "$root/.current.$$" "$root/current"
+}
+ready() {
+    local version=$1 deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        if curl --silent --fail --max-time 3 http://127.0.0.1:8080/ready >"$work/ready.json" &&
+           jq -e --arg v "$version" '.version == $v' "$work/ready.json" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+rollback() {
+    systemctl stop dzm.service || return 1
+    if [[ -n $previous ]]; then
+        link_release "$previous" || return 1
+    else
+        rm -f "$root/current"
+    fi
+    # A failed migration can leave WAL pages. Remove them only after the writer stops.
+    rm -f "$data/dzm.db-wal" "$data/dzm.db-shm"
+    if (( had_db )); then
+        install -o dzm -g dzm -m 0600 "$snapshot" "$data/.restore.db" || return 1
+        mv -fT "$data/.restore.db" "$data/dzm.db" || return 1
+    else
+        rm -f "$data/dzm.db"
+    fi
+    if [[ -n $previous ]]; then
+        systemctl reset-failed dzm.service
+        systemctl start dzm.service && ready "$installed" || return 1
+    fi
+}
+finish() {
+    local rc=$?
+    trap - EXIT
+    if (( switched )); then
+        error='Candidate failed restart/readiness; database and release restored'
+        blocked=$(jq -c --arg v "$latest" '. + [$v] | unique' <<<"$blocked")
+        if rollback; then
+            result=rolled_back
+        else
+            result=rollback_failed
+            error='Automatic rollback failed; operator intervention required'
+        fi
+        rc=1
+    elif (( rc != 0 )) && [[ -z $error ]]; then
+        error='Update failed before activation; installed release unchanged'
+    fi
+    write_status
+    if (( rc != 0 )); then alert; fi
+    rm -rf -- "$work"
+    exit "$rc"
+}
+trap finish EXIT
+[[ -z $error ]] || exit 1
+if [[ -e /etc/dzm/hold ]]; then result=skipped_hold; exit 0; fi
+arch=$(dpkg --print-architecture)
+case "$arch" in amd64|arm64) ;; *) result=verify_failed; error='Unsupported architecture'; exit 1;; esac
+asset="dzm_linux_$arch.tar.gz"
+source=${DZM_UPDATE_SOURCE:-github}
+if [[ $source == dir:/* ]]; then
+    # Explicit invocation only; never configure this in production updater.env.
+    src=${source#dir:}
+    latest=$(cat "$src/latest")
+elif [[ $source == github ]]; then
+    if [[ -z ${GITHUB_TOKEN:-} ]]; then error='GitHub token is not configured'; exit 1; fi
+    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" >"$work/auth"
+    code=$(curl --config "$work/auth" --silent --show-error --max-time 60 \
+        -D "$work/headers" -o "$work/release.json" -w '%{http_code}' \
+        -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+        https://api.github.com/repos/kproios/dz-manager/releases/latest)
+    expiry=$(awk 'tolower($0) ~ /^github-authentication-token-expiration:/ {sub(/^[^:]*:[ ]*/, ""); sub(/\r$/, ""); print}' "$work/headers" | tail -1)
+    [[ -z $expiry ]] || expires=$expiry
+    if [[ $code == 404 ]]; then
+        # Private repositories also return 404 for invalid access. Check access first.
+        curl --config "$work/auth" --silent --fail --max-time 30 -D "$work/repo-headers" \
+            https://api.github.com/repos/kproios/dz-manager >/dev/null
+        expiry=$(awk 'tolower($0) ~ /^github-authentication-token-expiration:/ {sub(/^[^:]*:[ ]*/, ""); sub(/\r$/, ""); print}' "$work/repo-headers" | tail -1)
+        [[ -z $expiry ]] || expires=$expiry
+        result=no_release; exit 0
+    fi
+    [[ $code == 200 ]] || { error="GitHub releases endpoint returned HTTP $code"; exit 1; }
+    latest=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$work/release.json")
+else
+    error='Unsupported update source'; exit 1
+fi
+result=verify_failed
+[[ $latest =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { error='Invalid stable release tag'; exit 1; }
+if [[ $latest == "$installed" ]]; then result=ok; exit 0; fi
+if jq -e --arg v "$latest" 'index($v) != null' <<<"$blocked" >/dev/null; then result=skipped_blocked; exit 0; fi
+result=download_failed
+if [[ $source == dir:* ]]; then
+    cp -- "$src/$latest/$asset" "$src/$latest/SHA256SUMS" "$work/"
+else
+    for name in "$asset" SHA256SUMS; do
+        url=$(jq -er --arg name "$name" '[.assets[] | select(.name == $name) | .url] | select(length == 1) | .[0]' "$work/release.json")
+        [[ $url =~ ^https://api\.github\.com/repos/kproios/dz-manager/releases/assets/[0-9]+$ ]] || exit 1
+        # curl strips Authorization on cross-host redirects to GitHub's asset storage.
+        curl --config "$work/auth" --silent --show-error --fail --location --max-time 300 \
+            -H 'Accept: application/octet-stream' -o "$work/$name" "$url"
+    done
+fi
+result=verify_failed
+sum=$(awk -v file="$asset" '$2 == file || $2 == "*"file {print $1}' "$work/SHA256SUMS")
+[[ $sum =~ ^[0-9a-fA-F]{64}$ ]] || { error='Missing or ambiguous checksum'; exit 1; }
+printf '%s  %s\n' "$sum" "$work/$asset" | sha256sum --check --status
+# Refuse traversal, links, devices and unexpected top-level members before extracting as root.
+tar -tzf "$work/$asset" >"$work/members"
+while IFS= read -r member; do
+    member=${member#./}
+    [[ $member != /* && /$member/ != *'/../'* ]] || exit 1
+    case "$member" in ''|dzm|VERSION|LICENSES|LICENSES/|LICENSES/*) ;; *) error='Unexpected archive member'; exit 1;; esac
+done <"$work/members"
+tar -tvzf "$work/$asset" | awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" {bad=1} END {exit bad}'
+mkdir "$work/release"
+tar -xzf "$work/$asset" --no-same-owner --no-same-permissions -C "$work/release"
+[[ -f $work/release/dzm && -f $work/release/VERSION ]]
+chmod 0755 "$work/release/dzm"
+[[ $(cat "$work/release/VERSION") == "$latest" ]]
+[[ $(timeout 10 "$work/release/dzm" version) == "$latest" ]]
+chmod -R a+rX,go-w "$work/release"
+if [[ -d $root/releases/$latest ]]; then rm -rf -- "$root/releases/$latest"; fi
+mv "$work/release" "$root/releases/$latest"
+[[ ! -L $root/current ]] || previous=$(readlink -f "$root/current")
+snapshot="$data/backups/pre-$latest.db"
+if [[ -f $data/dzm.db ]]; then
+    had_db=1
+    sqlite3 "$data/dzm.db" '.timeout 30000' ".backup '$snapshot'"
+    [[ $(sqlite3 "$snapshot" 'PRAGMA integrity_check;') == ok ]]
+    chmod 0600 "$snapshot"
+fi
+switched=1
+link_release "$root/releases/$latest"
+systemctl reset-failed dzm.service
+systemctl restart dzm.service
+ready "$latest"
+switched=0
+installed=$latest
+result=ok
+# Keep active release and two newest alternatives; retain matching pre-update snapshots only.
+count=1
+while IFS= read -r path; do
+    [[ $path != "$root/releases/$installed" ]] || continue
+    if (( count < 3 )); then count=$((count + 1)); continue; fi
+    rm -rf -- "$path"
+    rm -f -- "$data/backups/pre-$(basename "$path").db"
+done < <(find "$root/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
