@@ -118,3 +118,29 @@ func TestManualRestartRequiresVerificationAndPreventsDuplicates(t *testing.T) {
 		t.Fatalf("manual restart history: %+v %v", history, err)
 	}
 }
+
+func TestMarkerRefreshDoesNotGrowActivityHistory(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC()
+	data := map[string]any{"key": "world-1", "category": "custom", "class": "M4A1"}
+	e.send(ev("start-1", "event.start", now, "", []float64{500, 10, 600}, data))
+	for i := 0; i < 60; i++ {
+		e.send(ev(fmt.Sprint("seen-", i), "event.seen", now.Add(time.Duration(i+1)*time.Second), "", []float64{501, 10, 601}, data))
+	}
+	var raw int
+	e.App.DB.QueryRow(`SELECT COUNT(*) FROM events WHERE server_id=?`, e.server).Scan(&raw)
+	if raw != 1 {
+		t.Fatalf("routine refreshes grew history: %d", raw)
+	}
+	var markers []mapevents.Marker
+	e.JSON("GET", "/api/map/events", nil, &markers)
+	if len(markers) != 1 || markers[0].X != 501 || markers[0].Status != "active" {
+		t.Fatalf("live marker not refreshed: %+v", markers)
+	}
+	// Replayed older telemetry cannot move the marker backwards.
+	e.send(ev("old-seen", "event.seen", now, "", []float64{100, 10, 100}, data))
+	e.JSON("GET", "/api/map/events", nil, &markers)
+	if markers[0].X != 501 {
+		t.Fatal("old refresh moved marker backwards")
+	}
+}
