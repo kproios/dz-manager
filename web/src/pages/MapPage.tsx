@@ -50,13 +50,13 @@ export default function MapPage() {
     g.vehicles.clearLayers()
     if (!data?.available) return
     const stale = !data.fresh
-    if (show.players) for (const p of data.players) {
+    if (show.players) for (const p of data.players ?? []) {
       const mk = L.circleMarker(toLatLng(p.x, p.z), { radius: 6, color: '#fff', weight: 1.5, fillColor: stale ? '#888' : p.unconscious ? '#e74c3c' : '#2ecc71', fillOpacity: 0.95 })
       if (labels) mk.bindTooltip(p.name || p.steam64, { permanent: true, direction: 'right', className: 'lbl' })
       mk.on('click', () => setSel({ kind: 'player', p }))
       mk.addTo(g.players)
     }
-    if (show.vehicles) for (const v of data.vehicles) {
+    if (show.vehicles) for (const v of data.vehicles ?? []) {
       const mk = L.circleMarker(toLatLng(v.x, v.z), { radius: 5, color: '#000', weight: 1, fillColor: stale ? '#888' : v.engine_on ? '#f39c12' : '#95a5a6', fillOpacity: 0.9 })
       mk.bindTooltip(v.class, { direction: 'top' })
       mk.on('click', () => setSel({ kind: 'vehicle', v }))
@@ -89,7 +89,7 @@ export default function MapPage() {
         {data && (data.available
           ? <Badge state={data.fresh ? 'ok' : 'stale'}>{data.fresh ? 'live' : 'stale'} · {ago(data.received_at)}</Badge>
           : <Badge state="unconfigured">no MetricZ data</Badge>)}
-        <span>{data?.players.length ?? 0} players · {data?.vehicles.length ?? 0} vehicles · {events.data?.filter((m) => m.status === 'active').length ?? 0} active events</span>
+        <span>{data?.players?.length ?? 0} players · {data?.vehicles?.length ?? 0} vehicles · {events.data?.filter((m) => m.status === 'active').length ?? 0} active events</span>
         <label><input type="checkbox" checked={show.players} onChange={() => toggle('players')} /> players</label>
         <label><input type="checkbox" checked={labels} onChange={() => setLabels(!labels)} /> names</label>
         <label><input type="checkbox" checked={show.vehicles} onChange={() => toggle('vehicles')} /> vehicles</label>
