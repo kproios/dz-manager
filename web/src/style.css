@@ -88,6 +88,25 @@ blockquote { border-left: 3px solid var(--line); margin: 0; padding: 4px 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .leaflet-tooltip.lbl { background: rgba(0, 0, 0, 0.65); color: #fff; border: 0; box-shadow: none; padding: 1px 5px; font-size: 11px; }
 .leaflet-tooltip.lbl::before { display: none; }
+.log-filters { align-items: end; margin-bottom: 18px; }
+.log-filters label { display: flex; flex-direction: column; gap: 6px; }
+.log-filters .check { flex-direction: row; align-items: center; }
+.log-filters input[type=search] { min-width: 220px; width: 100%; }
+.table-scroll { overflow-x: auto; }
+.log-details { min-width: 220px; max-width: 560px; overflow-wrap: anywhere; }
+.log-details dl { display: block; margin: 0; }
+.log-details dl > div { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(120px, 2fr); gap: 12px; margin-bottom: 6px; }
+.log-details dt { color: var(--muted); }
+.log-details dd { margin: 0; }
+.log-details p { margin: 4px 0; }
+.log-details summary { cursor: pointer; color: var(--accent); }
+.log-details details[open] summary { margin-bottom: 12px; }
+.log-pager { justify-content: flex-end; margin-top: 18px; font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 760px) {
+ .log-filters > label { width: 100%; }
+ .log-pager { flex-wrap: wrap; }
+}
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   aside { flex-direction: row; padding: 0; overflow-x: auto; }

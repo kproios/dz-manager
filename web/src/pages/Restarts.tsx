@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, Cap, RestartEvent, Schedule } from '../api'
 import { useApi } from '../hooks'
-import { Badge, Card, Empty, ErrorBox } from '../ui'
+import { Badge, Card, Confirm, Empty, ErrorBox } from '../ui'
 import { fmtDuration, fmtTime } from '../util'
 import { useNotify } from '../App'
 
@@ -13,6 +13,13 @@ export default function Restarts() {
   const [times, setTimes] = useState('')
   const [now, setNow] = useState(Date.now())
   const notify = useNotify()
+  const [restartOpen,setRestartOpen]=useState(false)
+  const [restarting,setRestarting]=useState(false)
+  const restart=async()=>{
+    setRestarting(true)
+    try { await api.post('/api/restarts/now',{confirm:'RESTART'});notify('Restart requested. Waiting for the server to return.');setRestartOpen(false);r.reload() }
+    catch(e:any){notify(e.message,'bad')}finally{setRestarting(false)}
+  }
   useEffect(() => {
     if (r.data && !sc) { setSc(r.data.schedule); setTimes(r.data.schedule.times.join(', ')) }
   }, [r.data, sc])
@@ -33,15 +40,20 @@ export default function Restarts() {
   return (
     <>
       <h1>Restarts</h1>
+      <div className="row wrap">
+        <button className="danger" disabled={r.data.restart_drive.state!=='ok'||!r.data.online||restarting} onClick={()=>setRestartOpen(true)}>Restart server…</button>
+        {r.data.restart_drive.state!=='ok'&&<span className="muted">{r.data.restart_drive.reason}</span>}
+      </div>
+      {restartOpen&&<Confirm title="Restart the game server" word="RESTART" busy={restarting} onClose={()=>setRestartOpen(false)} onConfirm={restart} body={<p>Players will disconnect. DayZ saves and shuts down gracefully; the verified provider starts it again. Recovery is shown in the history below.</p>}/>}
       <div className="grid">
         <Card title="Next planned restart">
           {next ? <><div className="big">{fmtDuration((next - now) / 1000)}</div><div>{new Date(next).toLocaleString()}</div></> : <p className="muted">No schedule enabled.</p>}
           <p>Server: {r.data.online == null ? 'unknown' : r.data.online ? <Badge state="ok">online</Badge> : <Badge state="bad">down</Badge>}</p>
-          <p className="small"><b>Authority:</b> {sc.mode === 'drive' ? 'DZ Manager (RCON #lock / #shutdown)' : 'the provider (CFTools Architect / VYKIX panel)'} · <Badge state={r.data.provider_schedule.state} /> <span className="muted">{r.data.provider_schedule.reason}</span></p>
+          <p className="small"><b>Scheduled restarts:</b> {sc.mode === 'drive' ? sc.dry_run ? 'Simulation only — no restart commands are sent' : 'DZ Manager requests shutdown; provider relaunches' : 'Provider schedule; DZ Manager observes'} · <Badge state={r.data.provider_schedule.state} /> <span className="muted">{r.data.provider_schedule.reason}</span></p>
         </Card>
-        <Card title="Mirrored schedule">
+        <Card title="Restart schedule">
           <div className="form">
-            <label><input type="checkbox" checked={sc.enabled} onChange={(e) => setSc({ ...sc, enabled: e.target.checked })} /> Enabled (mirror of the provider schedule)</label>
+            <label><input type="checkbox" checked={sc.enabled} onChange={(e) => setSc({ ...sc, enabled: e.target.checked })} /> {sc.mode==='drive'?'Enable scheduled restarts':'Observe the provider schedule'}</label>
             <label>Times (HH:MM, local) <input value={times} onChange={(e) => setTimes(e.target.value)} /></label>
             <label>Timezone <input value={sc.timezone} onChange={(e) => setSc({ ...sc, timezone: e.target.value })} /></label>
             <label>Detection window (± minutes) <input type="number" value={sc.window_minutes} onChange={(e) => setSc({ ...sc, window_minutes: +e.target.value })} /></label>

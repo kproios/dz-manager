@@ -34,7 +34,9 @@ func BuildWizard(p *Profile, sec *Secrets, ingestURL string) Wizard {
 		ServerModLine: "-servermod=@MetricZ;@DZMBridge",
 		MetricZPath:   "$profile:metricz/config.json",
 		MetricZConfig: map[string]any{
-			"settings": map[string]any{"disable_telemetry": true},
+			"settings":         map[string]any{"disable_telemetry": true},
+			"geo":              map[string]any{"disable_transform_coordinates": true},
+			"disabled_metrics": map[string]any{"positions": false, "positions_height": false},
 			"http": map[string]any{
 				"enabled":    true,
 				"serialized": true,

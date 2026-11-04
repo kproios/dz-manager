@@ -1,4 +1,4 @@
 name = "DZMBridge";
 author = "kproios";
-version = "0.1.0";
+version = "0.1.4";
 overview = "Server-side bridge between a DayZ server and DZ Manager. Load with -servermod only.";
