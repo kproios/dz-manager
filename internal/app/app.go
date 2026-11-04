@@ -9,10 +9,12 @@ import (
 
 	"github.com/kproios/dz-manager/internal/alert"
 	"github.com/kproios/dz-manager/internal/audit"
-	"github.com/kproios/dz-manager/internal/bridge"
 	"github.com/kproios/dz-manager/internal/auth"
+	"github.com/kproios/dz-manager/internal/bans"
+	"github.com/kproios/dz-manager/internal/bridge"
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/config"
+	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/profiles"
@@ -37,6 +39,10 @@ type App struct {
 	Alert    *alert.Sender
 	Bridge   *bridge.Bridge
 	Players  *players.Service
+	Bans     *bans.Service
+
+	MapEvents    *mapevents.Service
+	BridgeExtras []func(context.Context) map[string]any
 
 	starters        []func(context.Context)
 	onProfileChange []func()
@@ -65,7 +71,15 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, version stri
 		Cfg: cfg, DB: db, Auth: auth.New(cfg, db, box, al, log), Audit: al, Caps: registry, Hub: hub,
 		Profiles: ps, Log: log, Version: version,
 	})
-	(&profiles.API{Store: ps, Audit: al, IngestURL: cfg.IngestPublicURL.String()}).Register(a.Server.API)
+	(&profiles.API{Store: ps, Audit: al, IngestURL: cfg.IngestPublicURL.String(), Extras: func(ctx context.Context) map[string]any {
+		out := map[string]any{}
+		for _, f := range a.BridgeExtras {
+			for k, v := range f(ctx) {
+				out[k] = v
+			}
+		}
+		return out
+	}}).Register(a.Server.API)
 	ps.OnChange = func() {
 		for _, f := range a.onProfileChange {
 			f()

@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 
+	"github.com/kproios/dz-manager/internal/actions"
 	"github.com/kproios/dz-manager/internal/alert"
+	"github.com/kproios/dz-manager/internal/bans"
 	"github.com/kproios/dz-manager/internal/bridge"
+	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/rcon"
@@ -37,7 +40,9 @@ func (a *App) registerFeatures(ctx context.Context) error {
 
 	// #16 bridge (event ingest + command queue) and #11 player history.
 	a.Bridge = &bridge.Bridge{DB: a.DB, Profiles: a.Profiles, Caps: a.Caps, Audit: srv.Audit, Log: srv.Log,
-		Publish: func(id string, types []string) { srv.Hub.Publish("events", map[string]any{"server_id": id, "types": types}) }}
+		Publish: func(id string, types []string) {
+			srv.Hub.Publish("events", map[string]any{"server_id": id, "types": types})
+		}}
 	a.Bridge.Init()
 	a.Bridge.Register(srv.Ingest)
 	a.Bridge.RegisterAPI(srv.API)
@@ -57,6 +62,32 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.MetricZ.RegisterAPI(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "metricz-watch", a.MetricZ.Watch) })
 
+	// #7 mod-backed player actions, #6 map events, #10 bans.
+	(&actions.API{Bridge: a.Bridge, Players: a.Players, Profiles: a.Profiles, Audit: srv.Audit}).Register(srv.API)
+	a.MapEvents = &mapevents.Service{DB: a.DB, Profiles: a.Profiles, Audit: srv.Audit, Log: srv.Log,
+		Publish: func() { srv.Hub.Publish("map_events", map[string]bool{"changed": true}) }}
+	a.MapEvents.Attach(a.Bridge)
+	a.MapEvents.Register(srv.API)
+	a.BridgeExtras = append(a.BridgeExtras, a.MapEvents.BridgeConfig)
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "map-events", a.MapEvents.Run) })
+	a.Bans = &bans.Service{DB: a.DB, Audit: srv.Audit, Players: a.Players, RCON: a.RCON, Roster: rconRoster{a.RCON}}
+	a.Bans.Register(srv.API)
+
 	_ = ctx
 	return nil
+}
+
+type rconRoster struct{ m *rcon.Monitor }
+
+func (r rconRoster) OnlineNumber(ctx context.Context, guid string) (int, bool) {
+	ps, err := r.m.FreshPlayers(ctx)
+	if err != nil {
+		return 0, false
+	}
+	for _, p := range ps {
+		if p.BEGUID == guid {
+			return p.Number, true
+		}
+	}
+	return 0, false
 }
