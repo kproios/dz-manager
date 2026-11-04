@@ -13,7 +13,8 @@ the app works, and the app does not need to know how the host was built.
 |---|---|
 | Trigger | Push of a git tag `vMAJOR.MINOR.PATCH` (semver, no suffix) on `main`. |
 | Deployable release | A **published, non-draft, non-prerelease** GitHub Release for that tag. Pre-releases (`v1.2.3-rc.1`) are never auto-installed. |
-| Assets | `dzm_linux_amd64.tar.gz`, `dzm_linux_arm64.tar.gz`, `SHA256SUMS` (exact names, no version in the file name). |
+| Assets | `dzm_linux_amd64.tar.gz`, `dzm_linux_arm64.tar.gz`, `SHA256SUMS` (exact names, no version in the file name). The updater ignores any other assets. |
+| Game-side asset | `DZMBridge.zip`: the server-side mod folder `@DZMBridge/` (`addons/DZMBridge.pbo`, `mod.cpp`), built by CI. **Unsigned** (server-side mods loaded with `-servermod` need no `.bisign`). The owner installs it on the game server by hand. The host updater never touches it. |
 | Tarball layout | `dzm` (static binary, CGO disabled), `VERSION` (single line, equals the tag, e.g. `v0.3.1`), `LICENSES/` (third-party notices). Nothing else is required. |
 | `SHA256SUMS` | `sha256sum` format, one line per tarball. |
 
@@ -27,7 +28,6 @@ adding protection.
 |---|---|
 | `dzm version` | Prints the version (same as `VERSION`) and exits 0. Must not touch the DB. |
 | `dzm serve` | Runs the HTTP server. Applies pending DB migrations at startup, before `/ready` returns 200. |
-| `dzm admin passwd <username>` | Creates the local admin, or resets its password. Reads the password from stdin. |
 | `dzm check-config` | Validates the environment and the data directory, then exits 0 or 1. Use it for preflight. |
 
 ## 3. Environment (`/etc/dzm/dzm.env`, mode 0640 root:dzm)
@@ -37,8 +37,12 @@ adding protection.
 | `DZM_LISTEN` | no | `127.0.0.1:8080` | Listener. Must stay on loopback. Ingress is only through cloudflared. |
 | `DZM_DATA_DIR` | no | `/var/lib/dzm` | SQLite DB, tiles, backups, updater status. |
 | `DZM_SECRET_KEY` | **yes** | – | 32-byte base64 key that encrypts stored game-server secrets (RCON password, ingest tokens) at rest. Missing or invalid key: refuse to start. **The owner keeps a copy in their password manager, because a DB backup is useless without it.** |
-| `DZM_PUBLIC_URL` | yes | – | e.g. `https://dzm.example.com` (UI hostname behind Cloudflare Access). Used for cookie scope and CSRF origin checks. |
-| `DZM_INGEST_PUBLIC_URL` | yes | – | e.g. `https://dzm-ingest.example.com` (shown to the operator when configuring the game-side mods). |
+| `DZM_PUBLIC_URL` | yes | – | `https://dzm.example.com`. Used for the OIDC redirect URI (`<url>/auth/callback`), cookie scope and CSRF origin checks. |
+| `DZM_INGEST_PUBLIC_URL` | yes | – | `https://dzm-ingest.example.com` (shown to the operator when configuring the game-side mods). |
+| `DZM_OIDC_ISSUER` | **yes** | – | Authentik issuer URL of the DZ Manager provider, e.g. `https://<authentik-host>/application/o/dz-manager/`. Must be reachable from the host. |
+| `DZM_OIDC_CLIENT_ID` | **yes** | – | Authentik OAuth2/OIDC provider client ID. |
+| `DZM_OIDC_CLIENT_SECRET` | **yes** | – | Authentik confidential-client secret. |
+| `DZM_OIDC_ADMIN_GROUP` | no | `dzm-admins` | Authentik group whose members may sign in. Everyone else is denied. |
 | `DZM_TZ` | no | `Europe/Athens` | Display and schedule timezone. Everything is stored in UTC. |
 | `DZM_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. JSON logs go to stdout (journald). |
 | `DZM_ALERT_WEBHOOK` | no | – | Optional ntfy/Discord-compatible URL for operational alerts. |
@@ -54,7 +58,8 @@ moving the game server to another provider does not need host access.
 | `GET /health` | none | 200 as soon as the process serves HTTP. Liveness only. |
 | `GET /ready` | none | 200 + `{"status":"ready","version":"vX.Y.Z"}` once the DB is open and migrated. 503 otherwise. The updater checks that `version` equals the tag it installed. |
 | `/ingest/…` | per-server credentials (Basic or token) | Game → DZ Manager telemetry and command polling. It is the **only** path published on the ingest hostname. |
-| everything else | local admin session | UI, API, SSE. |
+| `/auth/login`, `/auth/callback`, `/auth/logout` | none | OIDC authorization-code + PKCE flow against Authentik. |
+| everything else | session created **only** by a successful Authentik login | UI, API, SSE. There are no local passwords. |
 
 `/health` and `/ready` expose no secrets and no game data.
 
