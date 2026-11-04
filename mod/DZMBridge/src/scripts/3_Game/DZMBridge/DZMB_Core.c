@@ -2,7 +2,7 @@
 // HTTP wrapper adapted from DayZ-Takaro-Integration (MIT). DayZ RestContext
 // cannot send custom headers reliably, so the server token travels in the URL path.
 
-const string DZMB_VERSION = "0.1.1";
+const string DZMB_VERSION = "0.1.3";
 const string DZMB_DIR = "$profile:DZMBridge";
 const string DZMB_CONFIG = "$profile:DZMBridge/config.json";
 
@@ -103,8 +103,8 @@ class DZMB_Time
 	static string NowUTC()
 	{
 		int y, mo, d, h, mi, s;
-		GetGame().GetYearMonthDayUTC(y, mo, d);
-		GetGame().GetHourMinuteSecondUTC(h, mi, s);
+		GetYearMonthDayUTC(y, mo, d);
+		GetHourMinuteSecondUTC(h, mi, s);
 		return y.ToString() + "-" + Pad2(mo) + "-" + Pad2(d) + "T" + Pad2(h) + ":" + Pad2(mi) + ":" + Pad2(s) + "Z";
 	}
 
@@ -112,8 +112,8 @@ class DZMB_Time
 	static string BootId()
 	{
 		int y, mo, d, h, mi, s;
-		GetGame().GetYearMonthDayUTC(y, mo, d);
-		GetGame().GetHourMinuteSecondUTC(h, mi, s);
+		GetYearMonthDayUTC(y, mo, d);
+		GetHourMinuteSecondUTC(h, mi, s);
 		return y.ToString() + Pad2(mo) + Pad2(d) + Pad2(h) + Pad2(mi) + Pad2(s) + "-" + Math.RandomInt(1000, 9999).ToString();
 	}
 }
