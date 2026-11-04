@@ -57,7 +57,9 @@ func FromContext(ctx context.Context) *User {
 }
 
 // WithUser attaches a user to a context (used by tests and internal callers).
-func WithUser(ctx context.Context, u *User) context.Context { return context.WithValue(ctx, ctxKey{}, u) }
+func WithUser(ctx context.Context, u *User) context.Context {
+	return context.WithValue(ctx, ctxKey{}, u)
+}
 
 // Auth wires OIDC and sessions.
 type Auth struct {
@@ -368,7 +370,9 @@ func (a *Auth) OptionalUser(next http.Handler) http.Handler {
 	})
 }
 
-func safeMethod(m string) bool { return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions }
+func safeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
+}
 
 func safeReturn(s string) string {
 	if s == "" || !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/\\") || strings.HasPrefix(s, "/auth/") {

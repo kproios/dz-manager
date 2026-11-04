@@ -17,7 +17,9 @@ func base() map[string]string {
 	}
 }
 
-func load(m map[string]string) (*Config, error) { return FromEnv(func(k string) string { return m[k] }) }
+func load(m map[string]string) (*Config, error) {
+	return FromEnv(func(k string) string { return m[k] })
+}
 
 func TestDefaults(t *testing.T) {
 	c, err := load(base())
@@ -31,15 +33,15 @@ func TestDefaults(t *testing.T) {
 
 func TestFailClosed(t *testing.T) {
 	cases := map[string]func(m map[string]string){
-		"missing key":      func(m map[string]string) { delete(m, "DZM_SECRET_KEY") },
-		"short key":        func(m map[string]string) { m["DZM_SECRET_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 16)) },
-		"public listen":    func(m map[string]string) { m["DZM_LISTEN"] = "0.0.0.0:8080" },
-		"http public url":  func(m map[string]string) { m["DZM_PUBLIC_URL"] = "http://dzm.example.com" },
-		"missing oidc":     func(m map[string]string) { delete(m, "DZM_OIDC_CLIENT_SECRET") },
-		"http issuer":      func(m map[string]string) { m["DZM_OIDC_ISSUER"] = "http://auth.example/" },
-		"bad tz":           func(m map[string]string) { m["DZM_TZ"] = "Mars/Olympus" },
-		"bad log level":    func(m map[string]string) { m["DZM_LOG_LEVEL"] = "loud" },
-		"missing ingest":   func(m map[string]string) { delete(m, "DZM_INGEST_PUBLIC_URL") },
+		"missing key":     func(m map[string]string) { delete(m, "DZM_SECRET_KEY") },
+		"short key":       func(m map[string]string) { m["DZM_SECRET_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 16)) },
+		"public listen":   func(m map[string]string) { m["DZM_LISTEN"] = "0.0.0.0:8080" },
+		"http public url": func(m map[string]string) { m["DZM_PUBLIC_URL"] = "http://dzm.example.com" },
+		"missing oidc":    func(m map[string]string) { delete(m, "DZM_OIDC_CLIENT_SECRET") },
+		"http issuer":     func(m map[string]string) { m["DZM_OIDC_ISSUER"] = "http://auth.example/" },
+		"bad tz":          func(m map[string]string) { m["DZM_TZ"] = "Mars/Olympus" },
+		"bad log level":   func(m map[string]string) { m["DZM_LOG_LEVEL"] = "loud" },
+		"missing ingest":  func(m map[string]string) { delete(m, "DZM_INGEST_PUBLIC_URL") },
 	}
 	for name, mut := range cases {
 		t.Run(name, func(t *testing.T) {

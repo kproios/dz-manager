@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kproios/dz-manager/internal/alert"
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/caps"
@@ -14,6 +15,7 @@ import (
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/rcon"
+	"github.com/kproios/dz-manager/internal/restarts"
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/server"
 	"github.com/kproios/dz-manager/internal/store"
@@ -29,6 +31,8 @@ type App struct {
 	Caps     *caps.Registry
 	RCON     *rcon.Monitor
 	MetricZ  *metricz.Receiver
+	Restarts *restarts.Service
+	Alert    *alert.Sender
 
 	starters        []func(context.Context)
 	onProfileChange []func()
