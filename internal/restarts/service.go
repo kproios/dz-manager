@@ -144,6 +144,12 @@ func (s *Service) Observe(ctx context.Context, serverID string, online bool) {
 				kind, planned = "planned", p.UTC().Format(time.RFC3339)
 			}
 		}
+		var manualUntil int64
+		_ = s.DB.QueryRowContext(ctx, `SELECT CAST(value AS INTEGER) FROM settings WHERE key=?`, "restart_now_until:"+serverID).Scan(&manualUntil)
+		if manualUntil > now.Unix() {
+			kind = "manual"
+			planned = nil
+		}
 		_, err := s.DB.ExecContext(ctx, `INSERT INTO restart_events(server_id,down_at,planned_for,kind,outcome) VALUES(?,?,?,?, 'down')`, serverID, now.Format(time.RFC3339), planned, kind)
 		if err != nil {
 			s.Log.Error("restart event insert", "err", err)
@@ -357,6 +363,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/restarts", s.apiGet)
 	mux.HandleFunc("PUT /api/restarts/schedule", s.apiPut)
 	mux.HandleFunc("POST /api/restarts/drive-verification", s.apiDriveVerify)
+	mux.HandleFunc("POST /api/restarts/now", s.apiNow)
 }
 
 func actor(r *http.Request) audit.Actor {

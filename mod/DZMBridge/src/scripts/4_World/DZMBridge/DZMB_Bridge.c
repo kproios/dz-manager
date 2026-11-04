@@ -25,6 +25,13 @@ class DZMB_Cmd
 class DZMB_PollResponse
 {
 	ref array<ref DZMB_Cmd> commands;
+	ref DZMB_Tracking tracking;
+}
+
+class DZMB_Tracking
+{
+	ref map<string, string> event_classes;
+	ref array<string> rare_items;
 }
 
 class DZMB_FlushCallback : DZMB_Callback
@@ -73,6 +80,11 @@ class DZMB_Bridge
 	protected bool m_PollBusy;
 	protected int m_Backoff;
 	protected ref array<string> m_Commands;
+	protected bool m_TrackingScanPending = true;
+	protected int m_LastTrackingScan;
+	protected ref map<EntityAI, string> m_EventKeys;
+	protected ref map<EntityAI, bool> m_SeenItems;
+	protected float m_EventRefreshAcc;
 
 	static DZMB_Bridge Get()
 	{
@@ -101,6 +113,8 @@ class DZMB_Bridge
 		m_UidToSteam = new map<string, string>;
 		m_Boot = DZMB_Time.BootId();
 		m_Commands = new array<string>;
+		m_EventKeys = new map<EntityAI, string>;
+		m_SeenItems = new map<EntityAI, bool>;
 		m_Commands.Insert("ping");
 		m_Commands.Insert("list_players");
 		m_Commands.Insert("teleport");
@@ -145,6 +159,12 @@ class DZMB_Bridge
 		DZMB_Json d = new DZMB_Json();
 		d.Str("mod_version", DZMB_VERSION).Str("game_version", gv).StrArray("commands", m_Commands);
 		d.IntV("dropped", m_Dropped).IntV("queue", m_Queue.Count());
+		array<string> invalid = new array<string>;
+		foreach (string cls, string cat : DZMB_Config.Get().event_classes)
+			if (!ValidItemClass(cls)) invalid.Insert(cls);
+		foreach (string item : DZMB_Config.Get().rare_items)
+			if (!ValidItemClass(item)) invalid.Insert(item);
+		d.StrArray("tracking_invalid", invalid);
 		Emit("heartbeat", "", "", d.End(), false, "0 0 0");
 	}
 
@@ -154,6 +174,23 @@ class DZMB_Bridge
 		m_FlushAcc += dt;
 		m_PollAcc += dt;
 		m_BeatAcc += dt;
+		m_EventRefreshAcc += dt;
+		// One census after CE initialization, and only when tracking settings change.
+		// Normal operation uses hooks and the small configured-event registry.
+		if (m_TrackingScanPending && GetGame().GetTime() > 120000 && GetGame().GetTime() - m_LastTrackingScan > 60000)
+		{
+			m_TrackingScanPending = false;
+			m_LastTrackingScan = GetGame().GetTime();
+			ReconcileTracking();
+		}
+		if (m_EventRefreshAcc >= 60)
+		{
+			m_EventRefreshAcc = 0;
+			array<EntityAI> refresh = new array<EntityAI>;
+			foreach (EntityAI tracked, string key : m_EventKeys)
+				if (tracked) refresh.Insert(tracked);
+			foreach (EntityAI current : refresh) OnEntitySpawned(current);
+		}
 		if (m_BeatAcc >= cfg.heartbeat_seconds)
 		{
 			m_BeatAcc = 0;
@@ -226,6 +263,8 @@ class DZMB_Bridge
 		}
 		if (!resp.commands)
 			return;
+		if (resp.tracking)
+			ApplyTracking(resp.tracking);
 		foreach (DZMB_Cmd c : resp.commands)
 			Execute(c);
 	}
@@ -289,10 +328,7 @@ class DZMB_Bridge
 				DoHeal(c, p);
 				break;
 			case "kill":
-				p.SetHealth("", "", 0);
-				DZMB_Json k = new DZMB_Json();
-				k.BoolV("alive", p.IsAlive());
-				Result(c.id, !p.IsAlive(), "", k.End());
+				DoKill(c, p);
 				break;
 			case "strip":
 				DoStrip(c, p);
@@ -363,7 +399,7 @@ class DZMB_Bridge
 	protected void DoGive(DZMB_Cmd c, PlayerBase p)
 	{
 		string cls = c.params.item;
-		if (cls == "" || !GetGame().ConfigIsExisting("CfgVehicles " + cls))
+		if (!ValidItemClass(cls))
 		{
 			Result(c.id, false, "unknown classname", "null");
 			return;
@@ -388,6 +424,32 @@ class DZMB_Bridge
 		DZMB_Json j = new DZMB_Json();
 		j.Str("item", cls).IntV("in_inventory", inInv).IntV("on_ground", onGround);
 		Result(c.id, inInv + onGround == qty, "", j.End());
+	}
+
+	static bool ValidItemClass(string cls)
+	{
+		if (cls == "") return false;
+		return GetGame().ConfigIsExisting("CfgVehicles " + cls) || GetGame().ConfigIsExisting("CfgWeapons " + cls) || GetGame().ConfigIsExisting("CfgMagazines " + cls);
+	}
+
+	static bool KillPlayer(PlayerBase p)
+	{
+		// Admin kill is explicit: bypass invulnerability only for this operation.
+		bool allowed = p.GetAllowDamage();
+		p.SetAllowDamage(true);
+		p.SetHealth("", "Health", 0);
+		if (p.IsAlive()) p.SetAllowDamage(allowed);
+		return !p.IsAlive();
+	}
+
+	protected void DoKill(DZMB_Cmd c, PlayerBase p)
+	{
+		bool killed = KillPlayer(p);
+		DZMB_Json k = new DZMB_Json();
+		k.BoolV("alive", p.IsAlive());
+		string error = "";
+		if (!killed) error = "player is still alive: a server-side protection rejected the kill";
+		Result(c.id, killed, error, k.End());
 	}
 
 	protected void DoHeal(DZMB_Cmd c, PlayerBase p)
@@ -474,25 +536,85 @@ class DZMB_Bridge
 	{
 		int lo, hi;
 		o.GetNetworkID(lo, hi);
-		return "e:" + lo.ToString() + ":" + hi.ToString();
+		return "e:" + lo.ToString() + ":" + hi.ToString() + ":" + o.GetType() + ":" + o.GetPosition().ToString(false);
+	}
+
+	void ApplyTracking(DZMB_Tracking t)
+	{
+		if (!t.event_classes || !t.rare_items) return;
+		DZMB_ConfigData cfg = DZMB_Config.Get();
+		bool changed = t.event_classes.Count() != cfg.event_classes.Count() || t.rare_items.Count() != cfg.rare_items.Count();
+		foreach (string cls, string category : t.event_classes)
+			if (cfg.event_classes.Get(cls) != category) changed = true;
+		foreach (string item : t.rare_items)
+			if (cfg.rare_items.Find(item) < 0) changed = true;
+		if (!changed) return;
+		cfg.event_classes = t.event_classes;
+		cfg.rare_items = t.rare_items;
+		m_TrackingScanPending = true;
+		DZMB_Log.Info("tracking settings applied: " + cfg.event_classes.Count().ToString() + " event classes, " + cfg.rare_items.Count().ToString() + " item classes");
+	}
+
+	void ReconcileTracking()
+	{
+		array<Object> objects = new array<Object>;
+		array<CargoBase> cargo = new array<CargoBase>;
+		GetGame().GetObjectsAtPosition3D("7680 0 7680", 12000, objects, cargo);
+		int eventsFound = 0;
+		int itemsFound = 0;
+		foreach (Object object : objects)
+		{
+			EntityAI entity = EntityAI.Cast(object);
+			if (!entity) continue;
+			string category;
+			if (EventCategory(entity, category))
+			{
+				OnEntitySpawned(entity);
+				eventsFound++;
+			}
+			if (!entity.GetHierarchyParent() && DZMB_Config.Get().rare_items.Find(entity.GetType()) >= 0 && !m_SeenItems.Contains(entity))
+			{
+				EmitItem(entity, "item.observed");
+				itemsFound++;
+			}
+		}
+		DZMB_Log.Info("tracking census complete: " + eventsFound.ToString() + " active events, " + itemsFound.ToString() + " existing ground items first observed");
 	}
 
 	void OnEntitySpawned(EntityAI e)
 	{
+		if (e.GetHierarchyParent()) { OnEntityDeleted(e); return; }
 		string cat;
-		if (!DZMB_Config.Get().event_classes.Find(e.GetType(), cat))
+		if (!EventCategory(e, cat))
 			return;
 		DZMB_Json d = new DZMB_Json();
-		d.Str("key", m_Boot + ":" + EntityKey(e)).Str("category", cat).Str("class", e.GetType());
-		Emit("event.start", "", "", d.End(), true, e.GetPosition());
+		string type = "event.start";
+		if (m_EventKeys.Contains(e)) type = "event.seen";
+		if (!m_EventKeys.Contains(e)) m_EventKeys.Set(e, m_Boot + ":" + EntityKey(e));
+		d.Str("key", m_EventKeys.Get(e)).Str("category", cat).Str("class", e.GetType());
+		Emit(type, "", "", d.End(), true, e.GetPosition());
+	}
+
+	static bool EventCategory(EntityAI entity, out string category)
+	{
+		if (DZMB_Config.Get().event_classes.Find(entity.GetType(), category)) return true;
+		// Static scenery wrecks are not active crash events.
+		if (entity.GetType().IndexOf("StaticObj_") == 0) return false;
+		foreach (string cls, string cat : DZMB_Config.Get().event_classes)
+		{
+			if (entity.IsKindOf(cls)) { category = cat; return true; }
+		}
+		return false;
 	}
 
 	void OnEntityDeleted(EntityAI e)
 	{
-		if (!DZMB_Config.Get().event_classes.Contains(e.GetType()))
+		m_SeenItems.Remove(e);
+		if (!m_EventKeys.Contains(e))
 			return;
 		DZMB_Json d = new DZMB_Json();
-		d.Str("key", m_Boot + ":" + EntityKey(e));
+		d.Str("key", m_EventKeys.Get(e));
+		m_EventKeys.Remove(e);
 		Emit("event.end", "", "", d.End(), false, "0 0 0");
 	}
 
@@ -500,8 +622,16 @@ class DZMB_Bridge
 	{
 		if (DZMB_Config.Get().rare_items.Find(e.GetType()) < 0)
 			return;
+		EmitItem(e, "item.spawn");
+	}
+
+	void EmitItem(EntityAI e, string type)
+	{
+		if (m_SeenItems.Contains(e)) return;
+		m_SeenItems.Set(e, true);
 		DZMB_Json d = new DZMB_Json();
 		d.Str("class", e.GetType()).Str("key", m_Boot + ":" + EntityKey(e));
-		Emit("item.spawn", "", "", d.End(), true, e.GetPosition());
+		d.Str("observation", type);
+		Emit(type, "", "", d.End(), true, e.GetPosition());
 	}
 }
