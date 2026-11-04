@@ -6,7 +6,7 @@ import { ago, fmtDuration } from '../util'
 import { useNotify } from '../App'
 
 export default function Players() {
-  const roster = useApi<{ server_id: string; rcon: ServerStatus['rcon']; players: RconPlayer[] }>('/api/server/players', ['server_status'])
+  const roster = useApi<{ server_id: string; rcon: ServerStatus['rcon']; players: RconPlayer[] | null }>('/api/server/players', ['server_status'])
   const [q, setQ] = useState('')
   const [query, setQuery] = useState('')
   const hist = useApi<Player[]>('/api/players' + (query ? '?q=' + encodeURIComponent(query) : ''), ['events'])
@@ -17,7 +17,7 @@ export default function Players() {
       <h1>Players</h1>
       <Card title={<>Online now <span className="muted small">(RCON roster)</span></>} actions={roster.data && <Badge state={roster.data.rcon.state} />}>
         <ErrorBox error={roster.error} />
-        {!roster.data?.players.length ? <Empty>{roster.data?.rcon.state === 'ok' ? 'Nobody online.' : 'RCON not connected: ' + (roster.data?.rcon.error || '')}</Empty> : (
+        {!roster.data?.players?.length ? <Empty>{roster.data?.rcon.state === 'ok' ? 'Nobody online.' : 'RCON not connected: ' + (roster.data?.rcon.error || '')}</Empty> : (
           <table>
             <thead><tr><th>#</th><th>Name</th><th>BE GUID</th><th>Ping</th><th /></tr></thead>
             <tbody>

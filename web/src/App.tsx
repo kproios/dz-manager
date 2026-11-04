@@ -23,11 +23,12 @@ const nav: [string, string][] = [
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null)
+  const [sessionError, setSessionError] = useState(false)
   const [toast, setToast] = useState<{ msg: string; kind: 'ok' | 'bad' } | null>(null)
   const [route, args] = useHashRoute()
 
   useEffect(() => {
-    api.get<Me>('/api/me').then((m) => { setCSRF(m.csrf); setMe(m) }).catch(() => {})
+    api.get<Me>('/api/me').then((m) => { setCSRF(m.csrf); setMe(m) }).catch(() => setSessionError(true))
   }, [])
 
   const notify: Notify = (msg, kind = 'ok') => {
@@ -35,7 +36,9 @@ export default function App() {
     window.setTimeout(() => setToast(null), 6000)
   }
 
-  if (!me) return <div className="loading">Loading…</div>
+  if (!me) return sessionError ? (
+    <main role="alert"><h1>Couldn’t load your session</h1><p>Reload the page or sign in again.</p><a href="/auth/login">Sign in</a></main>
+  ) : <div className="loading">Loading…</div>
 
   let page
   switch (route) {
