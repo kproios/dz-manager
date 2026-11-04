@@ -80,7 +80,9 @@ modded class PlayerBase
 	}
 }
 
-modded class EntityAI
+// EntityAI is native and cannot be modded. Inventory objects use ItemBase;
+// world event structures use the script-level House hook below.
+modded class ItemBase
 {
 	override void EEInit()
 	{
@@ -115,6 +117,31 @@ modded class EntityAI
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (b && GetGame().IsDedicatedServer())
 			b.OnEntityDeleted(this);
+		super.EEDelete(parent);
+	}
+}
+
+modded class House
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		if (GetGame().IsDedicatedServer() && DZMB_Config.Get().event_classes.Contains(GetType()))
+			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitSpawn, 1000, false);
+	}
+
+	void DZMB_EmitSpawn()
+	{
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge)
+			bridge.OnEntitySpawned(this);
+	}
+
+	override void EEDelete(EntityAI parent)
+	{
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge && GetGame().IsDedicatedServer())
+			bridge.OnEntityDeleted(this);
 		super.EEDelete(parent);
 	}
 }
