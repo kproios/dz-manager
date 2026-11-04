@@ -49,6 +49,7 @@ func TestSightingAfterEndRevivesMarkerAndActiveListedFirst(t *testing.T) {
 	e.send(ev("i-start", "event.start", now.Add(-3*time.Minute), "", []float64{100, 0, 100}, map[string]any{"key": "boot1:item", "category": "tracked_item", "class": "PunchedCard"}))
 	e.send(ev("i-end", "event.end", now.Add(-2*time.Minute), "", nil, map[string]any{"key": "boot1:item"}))
 	e.send(ev("h-seen", "event.seen", now.Add(-time.Minute), "", []float64{7001, 0, 8001}, heli))
+	markers = nil // json.Unmarshal would keep fields omitted in the new response
 	e.JSON("GET", "/api/map/events", nil, &markers)
 	if len(markers) != 2 || markers[0].Key != "boot1:heli" || markers[0].Status != "active" || markers[0].EndedAt != nil {
 		t.Fatalf("revived: %+v", markers)
