@@ -30,6 +30,7 @@ class DZMB_PollResponse
 
 class DZMB_Tracking
 {
+	int revision;
 	ref map<string, string> event_classes;
 	ref array<string> rare_items;
 }
@@ -85,6 +86,8 @@ class DZMB_Bridge
 	protected ref map<EntityAI, string> m_EventKeys;
 	protected ref map<EntityAI, bool> m_SeenItems;
 	protected float m_EventRefreshAcc;
+	protected int m_TrackingRevision;
+	protected ref map<EntityAI, bool> m_LocalEntities = new map<EntityAI, bool>;
 
 	static DZMB_Bridge Get()
 	{
@@ -188,8 +191,9 @@ class DZMB_Bridge
 			m_EventRefreshAcc = 0;
 			array<EntityAI> refresh = new array<EntityAI>;
 			foreach (EntityAI tracked, string key : m_EventKeys)
-				if (tracked) refresh.Insert(tracked);
+				if (tracked && !m_LocalEntities.Contains(tracked)) refresh.Insert(tracked);
 			foreach (EntityAI current : refresh) OnEntitySpawned(current);
+			RefreshLocalMarkers();
 		}
 		if (m_BeatAcc >= cfg.heartbeat_seconds)
 		{
@@ -543,7 +547,7 @@ class DZMB_Bridge
 	{
 		if (!t.event_classes || !t.rare_items) return;
 		DZMB_ConfigData cfg = DZMB_Config.Get();
-		bool changed = t.event_classes.Count() != cfg.event_classes.Count() || t.rare_items.Count() != cfg.rare_items.Count();
+		bool changed = t.revision != m_TrackingRevision || t.event_classes.Count() != cfg.event_classes.Count() || t.rare_items.Count() != cfg.rare_items.Count();
 		foreach (string cls, string category : t.event_classes)
 			if (cfg.event_classes.Get(cls) != category) changed = true;
 		foreach (string item : t.rare_items)
@@ -551,6 +555,7 @@ class DZMB_Bridge
 		if (!changed) return;
 		cfg.event_classes = t.event_classes;
 		cfg.rare_items = t.rare_items;
+		m_TrackingRevision = t.revision;
 		m_TrackingScanPending = true;
 		DZMB_Log.Info("tracking settings applied: " + cfg.event_classes.Count().ToString() + " event classes, " + cfg.rare_items.Count().ToString() + " item classes");
 	}
@@ -567,7 +572,7 @@ class DZMB_Bridge
 			EntityAI entity = EntityAI.Cast(object);
 			if (!entity) continue;
 			string category;
-			if (EventCategory(entity, category))
+			if (WantsEntity(entity))
 			{
 				OnEntitySpawned(entity);
 				eventsFound++;
@@ -583,16 +588,62 @@ class DZMB_Bridge
 
 	void OnEntitySpawned(EntityAI e)
 	{
-		if (e.GetHierarchyParent()) { OnEntityDeleted(e); return; }
+		if (!e || e.IsHologram() || e.GetHierarchyParent()) { if(e) OnEntityDeleted(e); return; }
 		string cat;
-		if (!EventCategory(e, cat))
-			return;
+		if (IsDZMBTrackedEntity(e)) cat = "tracked_item";
+		else if (!EventCategory(e, cat)) { OnEntityDeleted(e); return; }
+		string kind = "item";
+		if (GetGame().ConfigIsExisting("CfgWeapons " + e.GetType())) kind = "weapon";
+		EmitMarker(e, cat, e.GetType(), kind, "", 0);
+	}
+
+	void EmitMarker(EntityAI e, string cat, string name, string kind, string group, float radius)
+	{
 		DZMB_Json d = new DZMB_Json();
 		string type = "event.start";
 		if (m_EventKeys.Contains(e)) type = "event.seen";
-		if (!m_EventKeys.Contains(e)) m_EventKeys.Set(e, m_Boot + ":" + EntityKey(e));
+		if (!m_EventKeys.Contains(e)) m_EventKeys.Set(e, m_Boot + ":" + EntityKey(e) + ":" + m_Seq.ToString());
 		d.Str("key", m_EventKeys.Get(e)).Str("category", cat).Str("class", e.GetType());
+		d.Str("name", name).Str("kind", kind).Str("group", group).IntV("radius", radius);
 		Emit(type, "", "", d.End(), true, e.GetPosition());
+	}
+
+	static bool IsDZMBTrackedEntity(EntityAI e)
+	{
+		return e && DZMB_Config.Get().rare_items.Find(e.GetType()) >= 0;
+	}
+
+	static bool WantsEntity(EntityAI e)
+	{
+		string category;
+		return IsDZMBTrackedEntity(e) || EventCategory(e, category);
+	}
+
+	// Optional integrations can override this hook without adding a dependency.
+	void CollectLocalMarkers() {}
+
+	void TrackLocalMarker(EntityAI entity, string category, string name, string group, float radius)
+	{
+		if (!entity || entity.IsHologram()) return;
+		m_LocalEntities.Set(entity, true);
+		EmitMarker(entity, category, name, "", group, radius);
+	}
+
+	void RefreshLocalMarkers()
+	{
+		array<EntityAI> previous = new array<EntityAI>;
+		foreach (EntityAI entity, bool present : m_LocalEntities)
+		{
+			previous.Insert(entity);
+			m_LocalEntities.Set(entity, false);
+		}
+		CollectLocalMarkers();
+		foreach (EntityAI old : previous)
+		{
+			if (old && m_LocalEntities.Get(old)) continue;
+			if (old) OnEntityDeleted(old);
+			m_LocalEntities.Remove(old);
+		}
 	}
 
 	static bool EventCategory(EntityAI entity, out string category)
@@ -620,8 +671,9 @@ class DZMB_Bridge
 
 	void OnCESpawn(EntityAI e)
 	{
-		if (DZMB_Config.Get().rare_items.Find(e.GetType()) < 0)
+		if (!e || e.GetHierarchyParent() || !IsDZMBTrackedEntity(e))
 			return;
+		OnEntitySpawned(e);
 		EmitItem(e, "item.spawn");
 	}
 
@@ -630,7 +682,7 @@ class DZMB_Bridge
 		if (m_SeenItems.Contains(e)) return;
 		m_SeenItems.Set(e, true);
 		DZMB_Json d = new DZMB_Json();
-		d.Str("class", e.GetType()).Str("key", m_Boot + ":" + EntityKey(e));
+		d.Str("class", e.GetType()).Str("key", "history:" + m_Boot + ":" + EntityKey(e) + ":" + m_Seq.ToString());
 		d.Str("observation", type);
 		Emit(type, "", "", d.End(), true, e.GetPosition());
 	}
