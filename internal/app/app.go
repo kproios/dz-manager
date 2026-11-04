@@ -12,6 +12,7 @@ import (
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/config"
 	"github.com/kproios/dz-manager/internal/profiles"
+	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/server"
 	"github.com/kproios/dz-manager/internal/store"
@@ -25,7 +26,10 @@ type App struct {
 	Server   *server.Server
 	Profiles *profiles.Store
 	Caps     *caps.Registry
-	starters []func(context.Context)
+	RCON     *rcon.Monitor
+
+	starters        []func(context.Context)
+	onProfileChange []func()
 }
 
 // New opens the database and builds every component. It does not start background work.
@@ -52,6 +56,12 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, version stri
 		Profiles: ps, Log: log, Version: version,
 	})
 	(&profiles.API{Store: ps, Audit: al, IngestURL: cfg.IngestPublicURL.String()}).Register(a.Server.API)
+	ps.OnChange = func() {
+		for _, f := range a.onProfileChange {
+			f()
+		}
+		hub.Publish("profiles", map[string]bool{"changed": true})
+	}
 	if err := a.registerFeatures(ctx); err != nil {
 		db.Close()
 		return nil, err
