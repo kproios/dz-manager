@@ -97,12 +97,16 @@ func (s *Service) onStart(ctx context.Context, ev bridge.Event) {
 	}
 	t := ev.Time.UTC().Format(time.RFC3339)
 	// Out-of-order safety: if an end for this key already arrived, keep it ended.
+	// A sighting *after* the recorded end proves the object still exists (for
+	// example an end inferred from a restart while the census was still running),
+	// so the marker comes back instead of staying hidden for the whole session.
+	const revive = `(map_events.status='expired' OR (map_events.status='ended' AND map_events.ended_at IS NOT NULL AND excluded.last_seen_at > map_events.ended_at))`
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO map_events(server_id,key,category,class,x,y,z,started_at,last_seen_at,expires_at,status,source,data) VALUES(?,?,?,?,?,?,?,?,?,?, 'active',?,?)
 		ON CONFLICT(server_id,key) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, last_seen_at=excluded.last_seen_at,
 		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class, data=excluded.data,
-		expires_at=CASE WHEN map_events.status='ended' THEN map_events.expires_at ELSE excluded.expires_at END,
-		ended_at=CASE WHEN map_events.status='expired' THEN NULL ELSE map_events.ended_at END,
-		status=CASE WHEN map_events.status='expired' THEN 'active' ELSE map_events.status END
+		expires_at=CASE WHEN map_events.status='ended' AND NOT `+revive+` THEN map_events.expires_at ELSE excluded.expires_at END,
+		ended_at=CASE WHEN `+revive+` THEN NULL ELSE map_events.ended_at END,
+		status=CASE WHEN `+revive+` THEN 'active' ELSE map_events.status END
 		WHERE map_events.x IS NULL OR excluded.last_seen_at >= map_events.last_seen_at`,
 		ev.ServerID, d.Key, d.Category, trunc(d.Class), ev.Pos.X, ev.Pos.Y, ev.Pos.Z, t, t, ev.Time.Add(ttl).UTC().Format(time.RFC3339), ev.Source, string(ev.Data))
 	if err != nil {
@@ -265,7 +269,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	since := s.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	now := s.Now().UTC().Format(time.RFC3339)
 	paged := r.URL.Query().Get("paged") == "true"
-	limit, before, query := 500, 0, ""
+	limit, before, query := 1000, 0, ""
 	if paged {
 		limit = httpx.QueryInt(r, "limit", 25)
 		if limit < 1 || limit > 100 {
@@ -278,10 +282,16 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(query) + "%"
+	// The live map (unpaged) lists every active marker before any history, so a
+	// long-running event can never be pushed out of the list by newer history.
+	order := "id DESC"
+	if !paged {
+		order = "(status='active') DESC, id DESC"
+	}
 	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0) FROM map_events
 		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND expires_at >= ?))
 		AND (?=0 OR id<?) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\')
-		ORDER BY id DESC LIMIT ?`, p.ID, since, now, before, before, query, pattern, limit+1)
+		ORDER BY `+order+` LIMIT ?`, p.ID, since, now, before, before, query, pattern, limit+1)
 	if err != nil {
 		httpx.Error(w, 500, err.Error())
 		return

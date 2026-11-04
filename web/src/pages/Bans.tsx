@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, Ban } from '../api'
 import { useApi } from '../hooks'
-import { Badge, Card, Confirm, Empty, ErrorBox } from '../ui'
+import { Badge, Card, Confirm, Empty, ErrorBox, IdValue, PageHead, Pager, Trunc, usePaged } from '../ui'
 import { fmtTime } from '../util'
 import { useNotify } from '../App'
 
@@ -14,6 +14,7 @@ export default function Bans() {
   const [revoke, setRevoke] = useState<Ban | null>(null)
   const [imp, setImp] = useState({ name: '', source: '', format: 'csv', content: '' })
   const notify = useNotify()
+  const pg = usePaged(bans.data, 15)
 
   const reconcile = async () => {
     try { setDrift(await api.get('/api/bans/reconcile')) } catch (e: any) { notify(e.message, 'bad') }
@@ -36,24 +37,24 @@ export default function Bans() {
   }
   return (
     <>
-      <h1>Bans</h1>
+      <PageHead title="Bans" sub="Local bans are enforced by BattlEye; external lists are evidence only" />
       <Card title="Local bans (BattlEye-enforced)" actions={<>
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select value={status} onChange={(e) => { setStatus(e.target.value); pg.setPage(1) }} style={{ width: 120 }} aria-label="Show">
           <option value="active">active</option><option value="all">all</option><option value="revoked">revoked</option><option value="expired">expired</option>
         </select>
-        <button onClick={reconcile}>Reconcile with BattlEye</button>
-        <a className="button" href="/api/bans/export">Export CSV</a>
+        <button className="small" onClick={reconcile}>Reconcile with BattlEye</button>
+        <a className="button small" href="/api/bans/export">Export CSV</a>
       </>}>
         <ErrorBox error={bans.error} />
         {!bans.data?.length ? <Empty>No bans. Ban from a player profile.</Empty> : (
           <table>
             <thead><tr><th>#</th><th>Player</th><th>Reason</th><th>Issued</th><th>Expires</th><th>Status</th><th>Applied</th><th /></tr></thead>
             <tbody>
-              {bans.data.map((b) => (
+              {pg.rows.map((b) => (
                 <tr key={b.id}>
                   <td>{b.id}</td>
-                  <td>{b.steam64 ? <a href={'#/players/' + b.steam64}>{b.name || b.steam64}</a> : <code className="small">{b.be_guid}</code>}</td>
-                  <td>{b.reason}</td><td>{fmtTime(b.created_at)} · {b.issuer_name}</td><td>{b.expires_at ? fmtTime(b.expires_at) : 'permanent'}</td>
+                  <td>{b.steam64 ? <a href={'#/players/' + b.steam64} title={b.steam64}>{b.name || b.steam64}</a> : <IdValue value={b.be_guid} label="BE GUID" short />}</td>
+                  <td><Trunc text={b.reason} max={240} /></td><td>{fmtTime(b.created_at)} <span className="muted small">by {b.issuer_name}</span></td><td>{b.expires_at ? fmtTime(b.expires_at) : 'permanent'}</td>
                   <td><Badge state={b.status} /></td><td className="small">{b.applied}</td>
                   <td>{b.status === 'active' && <button className="small" onClick={() => setRevoke(b)}>Revoke</button>}</td>
                 </tr>
@@ -61,6 +62,7 @@ export default function Bans() {
             </tbody>
           </table>
         )}
+        <Pager {...pg} noun="bans" />
         {drift && (
           <div className="small">
             <b>Reconciliation:</b> {drift.in_sync} in sync · {drift.missing.length} missing in BattlEye · {drift.stale.length} stale (ours, revoked here) · {drift.foreign.length} created by others (never touched)

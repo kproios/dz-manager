@@ -1,62 +1,109 @@
-import { useState } from 'react'
-import { api, Cap, MapState, ServerStatus } from '../api'
-import { useApi } from '../hooks'
-import { Badge, Card, CapList, Confirm, ErrorBox } from '../ui'
+import { useMemo, useState } from 'react'
+import { api, Cap, MapState, PerfPoint, ServerStatus } from '../api'
+import { useApi, useNow } from '../hooks'
+import { Badge, Card, CapList, Confirm, ErrorBox, Meter, PageHead, Seg, StatTile } from '../ui'
 import { ago, fmtDuration, fmtTime } from '../util'
 import { useNotify } from '../App'
+import { LineChart, Pt, Sparkline } from '../charts'
+import { usePref } from '../prefs'
+import { ServerControls } from './Restarts'
+import { Icon } from '../icons'
+
+const RANGES: [number, string][] = [[6, '6 h'], [24, '24 h'], [72, '3 days'], [168, '7 days']]
+
+/** Average minute buckets down to at most n points so long ranges stay light. */
+function series(points: PerfPoint[] | null, key: 'players' | 'fps' | 'vehicles', n = 360): Pt[] {
+  if (!points?.length) return []
+  const raw = points.map((p) => ({ t: new Date(p.minute.length === 16 ? p.minute + ':00Z' : p.minute).getTime(), v: p[key] }))
+  if (raw.length <= n) return raw
+  const size = Math.ceil(raw.length / n), out: Pt[] = []
+  for (let i = 0; i < raw.length; i += size) {
+    const chunk = raw.slice(i, i + size), vals = chunk.map((c) => c.v).filter((v): v is number => v != null)
+    out.push({ t: chunk[Math.floor(chunk.length / 2)].t, v: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null })
+  }
+  return out
+}
 
 export default function Dashboard() {
   const status = useApi<any>('/api/status', ['profiles'], 60000)
   const srv = useApi<ServerStatus>('/api/server/status', ['server_status'])
   const caps = useApi<{ server_id: string | null; capabilities: Cap[] }>('/api/capabilities', ['capabilities', 'profiles'])
   const map = useApi<MapState>('/api/map/state', ['map'], 30000)
+  const [hours, setHours] = usePref('dashboard.hours', 24)
+  const perf = useApi<PerfPoint[]>('/api/perf?hours=' + hours, [], 60000)
+  const spark = useApi<PerfPoint[]>('/api/perf?hours=2', [], 60000)
+  const restarts = useApi<{ next?: string }>('/api/restarts', ['restarts'], 60000)
+  const now = useNow(1000)
   const s = srv.data
   const st = status.data
+  const perfNow = map.data?.available ? map.data.perf : undefined
+  const online = s?.rcon.state === 'ok' ? s.players?.length ?? 0 : s?.info?.players ?? 0
+  const max = s?.info?.max_players
+  const pl = useMemo(() => series(perf.data, 'players'), [perf.data])
+  const fps = useMemo(() => series(perf.data, 'fps'), [perf.data])
+  const sp = spark.data ?? []
+  const peak = pl.reduce((m, p) => Math.max(m, p.v ?? 0), 0)
+  const fpsVals = fps.map((p) => p.v).filter((v): v is number => v != null)
+  const fpsAvg = fpsVals.length ? fpsVals.reduce((a, b) => a + b, 0) / fpsVals.length : null
+  const next = restarts.data?.next ? new Date(restarts.data.next).getTime() : null
+  const curFps = perfNow?.fps_avg ?? perfNow?.fps
+  const fpsColor = curFps == null ? undefined : curFps >= 30 ? 'okc' : curFps >= 15 ? 'warn' : ''
 
   return (
     <>
-      <h1>{s?.info?.name || st?.active_server?.name || 'Dashboard'}</h1>
+      <PageHead title={s?.info?.name || st?.active_server?.name || 'Dashboard'}
+        sub={s?.server_id ? <span className="row wrap">
+          <Badge state={s.query.state} title={s.query.error || 'Server query (A2S)'}>{s.query.state === 'ok' ? 'query ok' : 'query ' + s.query.state.replaceAll('_', ' ')}</Badge>
+          <Badge state={s.rcon.state} title={s.rcon.error || 'BattlEye RCON'}>{s.rcon.state === 'ok' ? 'RCON ok' : 'RCON ' + s.rcon.state.replaceAll('_', ' ')}</Badge>
+          {s.info && <span>{s.info.map} · v{s.info.version} · {s.info.latency_ms} ms</span>}
+        </span> : undefined}
+        actions={s?.server_id ? <ServerControls /> : undefined} />
       <ErrorBox error={status.error || srv.error} />
-      {st?.warnings?.length > 0 && (
-        <div className="warnings">{st.warnings.map((w: string) => <div key={w}>⚠ {w}</div>)}</div>
-      )}
+      {st?.warnings?.length > 0 && <div className="warnings">{st.warnings.map((w: string) => <div key={w}>⚠ {w}</div>)}</div>}
+      {s && !s.server_id && <div className="warnings">No active server yet. Add one under <a href="#/settings">Settings → Game servers</a>.</div>}
+
+      <div className="tiles">
+        <StatTile label={<><Icon name="players" />Players online</>} value={online} unit={max ? `/ ${max}` : undefined}
+          foot={s?.rcon.state === 'ok' ? `RCON roster: ${s.players?.length ?? 0}` : 'From server query'}>
+          {max ? <Meter value={online / max} /> : null}
+        </StatTile>
+        <StatTile label="Server FPS" value={<span className={fpsColor}>{curFps != null ? curFps.toFixed(0) : '—'}</span>} foot={perfNow?.fps_min != null ? `min ${perfNow.fps_min.toFixed(0)} this minute` : 'MetricZ'}>
+          <Sparkline values={sp.map((p) => p.fps)} color="var(--series-2)" />
+        </StatTile>
+        <StatTile label="Uptime" value={fmtDuration(perfNow?.uptime_seconds)} foot={perfNow?.uptime_seconds ? 'since ' + new Date(Date.now() - perfNow.uptime_seconds * 1000).toLocaleTimeString(undefined, { timeStyle: 'short' }) : '—'} />
+        <StatTile label={<><Icon name="restarts" />Next restart</>} value={next ? fmtDuration((next - now) / 1000) : '—'} foot={next ? new Date(next).toLocaleTimeString(undefined, { timeStyle: 'short' }) : <a href="#/restarts">Set up a schedule</a>} />
+        <StatTile label="Vehicles" value={perfNow?.vehicles ?? map.data?.vehicles?.length ?? '—'} foot="in the world">
+          <Sparkline values={sp.map((p) => p.vehicles)} color="var(--series-3)" />
+        </StatTile>
+        <StatTile label="AI" value={perfNow?.infected ?? '—'} unit="infected" foot={perfNow?.animals != null ? `${perfNow.animals} animals` : '—'} />
+      </div>
+
+      <div className="row" style={{ marginBottom: 10 }}>
+        <h2>Trends</h2>
+        <span className="muted small">{map.data?.available ? <>MetricZ <Badge state={map.data.fresh ? 'ok' : 'stale'}>{map.data.fresh ? 'live' : 'stale'}</Badge> {ago(map.data.received_at)}</> : map.data?.reason || ''}</span>
+        <span className="grow" />
+        <Seg label="Time range" value={hours} onChange={setHours} options={RANGES} />
+      </div>
+      <div className="grid two">
+        <Card title="Players online" actions={<span className="statline"><span className="small muted">peak <b style={{ color: 'var(--text)' }}>{Math.round(peak)}</b></span></span>}>
+          <LineChart data={pl} color="var(--series-1)" label="Players" />
+        </Card>
+        <Card title="Server FPS" actions={<span className="small muted">average <b style={{ color: 'var(--text)' }}>{fpsAvg != null ? fpsAvg.toFixed(0) : '—'}</b></span>}>
+          <LineChart data={fps} color="var(--series-2)" label="FPS" />
+        </Card>
+      </div>
+
       <div className="grid">
-        <Card title="Server">
-          {!s || !s.server_id ? <p className="muted">No active server. Add one under Settings → Servers.</p> : (
-            <dl>
-              <dt>Query (A2S)</dt><dd><Badge state={s.query.state} /> <span className="small muted">{s.query.error}</span></dd>
-              <dt>RCON</dt><dd><Badge state={s.rcon.state} /> <span className="small muted">{s.rcon.error}</span></dd>
-              <dt>Players</dt><dd>{s.info ? `${s.info.players} / ${s.info.max_players}` : '—'} {s.rcon.state === 'ok' && <span className="muted small">(RCON roster: {s.players?.length ?? 0})</span>}</dd>
-              <dt>Map / version</dt><dd>{s.info ? `${s.info.map} · ${s.info.version}` : '—'}</dd>
-              <dt>Latency</dt><dd>{s.info ? `${s.info.latency_ms} ms` : '—'}</dd>
-              <dt>Locked</dt><dd>{s.locked == null ? 'unknown' : s.locked ? 'yes' : 'no'}</dd>
-              <dt>Updated</dt><dd>{ago(s.updated_at)}</dd>
-            </dl>
-          )}
-          <p className="small muted">A2S may be cached by the provider; "query ok" does not prove the server is joinable.</p>
-        </Card>
-        <Card title="Performance (MetricZ)">
-          {!map.data?.available ? <p className="muted">{map.data?.reason || 'No data'}</p> : (
-            <dl>
-              <dt>FPS</dt><dd>{map.data.perf?.fps_avg?.toFixed(1) ?? map.data.perf?.fps?.toFixed(1) ?? '—'} {map.data.perf?.fps_min != null && <span className="muted small">min {map.data.perf.fps_min.toFixed(0)}</span>}</dd>
-              <dt>Players</dt><dd>{map.data.perf?.players ?? '—'}</dd>
-              <dt>Vehicles</dt><dd>{map.data.perf?.vehicles ?? '—'}</dd>
-              <dt>Infected / animals</dt><dd>{map.data.perf?.infected ?? '—'} / {map.data.perf?.animals ?? '—'}</dd>
-              <dt>Uptime</dt><dd>{fmtDuration(map.data.perf?.uptime_seconds)}</dd>
-              <dt>Data</dt><dd><Badge state={map.data.fresh ? 'ok' : 'stale'}>{map.data.fresh ? 'live' : 'stale'}</Badge> {ago(map.data.received_at)}</dd>
-            </dl>
-          )}
-        </Card>
-        <Card title="Capabilities">{caps.data && <CapList caps={caps.data.capabilities} />}</Card>
         <Broadcast disabled={s?.rcon.state !== 'ok'} />
+        <Card title="Capabilities">{caps.data && <CapList caps={caps.data.capabilities} />}</Card>
         <Card title="DZ Manager">
           {st && (
             <dl>
               <dt>Version</dt><dd>{st.version}</dd>
-              <dt>Started</dt><dd>{fmtTime(st.started_at)}</dd>
+              <dt>Running since</dt><dd title={fmtTime(st.started_at)}>{ago(st.started_at).replace(' ago', '')}</dd>
               <dt>Timezone</dt><dd>{st.timezone}</dd>
-              <dt>Database</dt><dd>schema v{st.schema_version}, {st.db_bytes ? (st.db_bytes / 1048576).toFixed(1) + ' MB' : '—'}</dd>
-              <dt>Updater</dt><dd>{st.updater ? <><Badge state={st.updater.last_result === 'ok' ? 'ok' : 'warn'}>{st.updater.last_result}</Badge> checked {ago(st.updater.checked_at)}</> : 'not installed'}</dd>
+              <dt>Database</dt><dd>schema v{st.schema_version} · {st.db_bytes ? (st.db_bytes / 1048576).toFixed(1) + ' MB' : '—'}</dd>
+              <dt>Updates</dt><dd>{st.updater ? <><Badge state={st.updater.last_result === 'ok' ? 'ok' : 'warn'}>{st.updater.last_result}</Badge> <span className="muted small">checked {ago(st.updater.checked_at)}</span></> : 'not installed'}</dd>
             </dl>
           )}
         </Card>
@@ -64,6 +111,8 @@ export default function Dashboard() {
     </>
   )
 }
+
+const PRESETS = ['Server restart soon — find a safe spot.', 'Admins are online. Report issues on Discord.', 'Please respect the server rules. Have fun!']
 
 function Broadcast({ disabled }: { disabled: boolean }) {
   const [msg, setMsg] = useState('')
@@ -73,8 +122,8 @@ function Broadcast({ disabled }: { disabled: boolean }) {
   const send = async () => {
     setBusy(true)
     try {
-      const r = await api.post<{ ok: boolean; reply: string }>('/api/rcon/say', { message: msg })
-      notify('Broadcast sent' + (r.reply ? `: ${r.reply}` : ''))
+      await api.post<{ ok: boolean; reply: string }>('/api/rcon/say', { message: msg })
+      notify('Broadcast sent')
       setMsg('')
     } catch (e: any) {
       notify(e.message, 'bad')
@@ -84,13 +133,20 @@ function Broadcast({ disabled }: { disabled: boolean }) {
     }
   }
   return (
-    <Card title="Broadcast (RCON)">
-      <textarea maxLength={200} rows={2} value={msg} placeholder="Message to all players" onChange={(e) => setMsg(e.target.value)} disabled={disabled} />
-      <div className="row end">
-        <button disabled={disabled || !msg.trim()} onClick={() => setConfirm(true)}>Send to all</button>
+    <Card title={<><Icon name="megaphone" />Broadcast</>}>
+      <div className="stack">
+        <select value="" onChange={(e) => e.target.value && setMsg(e.target.value)} disabled={disabled} aria-label="Preset messages">
+          <option value="">Quick messages…</option>
+          {PRESETS.map((p) => <option key={p}>{p}</option>)}
+        </select>
+        <textarea maxLength={200} rows={2} value={msg} placeholder="Message to all players" onChange={(e) => setMsg(e.target.value)} disabled={disabled} />
       </div>
-      {disabled && <p className="small muted">Requires RCON (capability rcon = ok).</p>}
-      {confirm && <Confirm title="Broadcast to all players?" body={<blockquote>{msg}</blockquote>} busy={busy} onConfirm={send} onClose={() => setConfirm(false)} />}
+      <div className="row end">
+        <span className="muted small">{msg.length}/200</span>
+        <button className="primary small" disabled={disabled || !msg.trim()} onClick={() => setConfirm(true)}>Send to all</button>
+      </div>
+      {disabled && <p className="hint">Requires a working RCON connection.</p>}
+      {confirm && <Confirm title="Broadcast to all players?" tone="primary" confirmLabel="Send" body={<blockquote>{msg}</blockquote>} busy={busy} onConfirm={send} onClose={() => setConfirm(false)} />}
     </Card>
   )
 }

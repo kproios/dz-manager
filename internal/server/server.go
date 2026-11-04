@@ -65,6 +65,8 @@ func New(s *Server) *Server {
 		httpx.JSON(w, 200, page)
 	})
 	s.API.HandleFunc("GET /api/capabilities", s.capabilities)
+	s.API.HandleFunc("GET /api/prefs", s.getPrefs)
+	s.API.HandleFunc("PUT /api/prefs", s.putPrefs)
 	s.API.Handle("GET /api/stream", s.Hub)
 	s.API.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
 	s.Ingest.HandleFunc("POST /ingest/ping", s.ingestPing)

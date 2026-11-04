@@ -90,5 +90,8 @@ export interface ActionAvail { name: string; label: string; destructive: boolean
 export interface Schedule {
   server_id: string; enabled: boolean; times: string[]; timezone: string; mode: string; announce: boolean
   announce_minutes: number[]; announce_text: string; window_minutes: number; timeout_minutes: number; dry_run: boolean
+  lock_minutes: number; kick_minutes: number; kick_message: string
 }
+export interface ManualRestart { at: string; requested: string; delay_minutes: number; by: string }
+export interface PerfPoint { minute: string; fps: number | null; fps_min: number | null; players: number | null; infected: number | null; animals: number | null; items: number | null; vehicles: number | null }
 export interface RestartEvent { id: number; down_at?: string; up_at?: string; planned_for?: string; kind: string; outcome: string; duration_seconds?: number }
