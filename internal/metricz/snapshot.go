@@ -10,7 +10,7 @@ import (
 // "not reported" is distinguishable from zero.
 type Player struct {
 	Steam64     string   `json:"steam64"`
-	BEGUID      string   `json:"be_guid,omitempty"`
+	BEGUID      string   `json:"reported_id,omitempty"` // MetricZ "guid" label = PlayerIdentity.GetId()
 	Name        string   `json:"name"`
 	X           float64  `json:"x"`
 	Y           float64  `json:"y"` // altitude

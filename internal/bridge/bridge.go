@@ -418,7 +418,23 @@ func (b *Bridge) poll(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, 500, err.Error())
 		return
 	}
-	httpx.JSON(w, 200, map[string]any{"commands": cmds})
+	// Slim shape for Enforce Script's JsonSerializer: only what the mod needs.
+	type slim struct {
+		ID      string          `json:"id"`
+		Action  string          `json:"action"`
+		Target  string          `json:"target"`
+		Params  json.RawMessage `json:"params"`
+		Expires string          `json:"expires_at"`
+	}
+	out := make([]slim, 0, len(cmds))
+	for _, c := range cmds {
+		p := c.Params
+		if len(p) == 0 || string(p) == "null" {
+			p = json.RawMessage("{}")
+		}
+		out = append(out, slim{c.ID, c.Action, c.Target, p, c.ExpiresAt})
+	}
+	httpx.JSON(w, 200, map[string]any{"commands": out})
 }
 
 // Deliver marks up to n queued, unexpired commands as delivered and returns them.

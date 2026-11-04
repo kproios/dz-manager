@@ -67,8 +67,10 @@ func (s *Service) upsert(ctx context.Context, steam64, name, reportedGUID string
 	id, _ := strconv.ParseUint(steam64, 10, 64)
 	guid := dzid.BattlEyeString(id)
 	dz := dzid.DayzString(id)
+	// Sources report either the BE GUID or the DayZ ID (PlayerIdentity.GetId());
+	// only a value matching neither is a mismatch.
 	mismatch := 0
-	if reportedGUID != "" && !strings.EqualFold(reportedGUID, guid) {
+	if reportedGUID != "" && !strings.EqualFold(reportedGUID, guid) && reportedGUID != dz {
 		mismatch = 1
 	}
 	t := ts(at)
@@ -89,6 +91,7 @@ func (s *Service) upsert(ctx context.Context, steam64, name, reportedGUID string
 type connectData struct {
 	Name   string `json:"name"`
 	BEGUID string `json:"be_guid"`
+	UID    string `json:"uid"` // PlayerIdentity.GetId()
 }
 
 func (s *Service) onConnect(ctx context.Context, ev bridge.Event) {
@@ -98,7 +101,11 @@ func (s *Service) onConnect(ctx context.Context, ev bridge.Event) {
 	if !validSteam64(steam) {
 		return
 	}
-	s.upsert(ctx, steam, d.Name, d.BEGUID, ev.Time)
+	reported := d.BEGUID
+	if reported == "" {
+		reported = d.UID
+	}
+	s.upsert(ctx, steam, d.Name, reported, ev.Time)
 	// A still-open session means we missed the disconnect: close it as inferred.
 	s.closeOpen(ctx, ev.ServerID, steam, "inferred_end", nil)
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO player_sessions(server_id,steam64,started_at,last_seen,source) VALUES(?,?,?,?, 'bridge')`, ev.ServerID, steam, ts(ev.Time), ts(ev.Time))

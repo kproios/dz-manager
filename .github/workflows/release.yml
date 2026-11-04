@@ -1,0 +1,55 @@
+# Publishes a release in the exact shape of docs/contracts/host-and-release.md.
+# The #21 host updater installs it automatically within ~30 minutes.
+name: release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag must be vX.Y.Z on main
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must be vX.Y.Z (pre-releases are not deployable)"; exit 1; }
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tagged commit is not on main"; exit 1; }
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build UI and test
+        run: |
+          npm ci --prefix web
+          npm --prefix web test
+          npm --prefix web run build
+          go test -count=1 ./...
+      - name: Package
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            d="dist/pkg-$arch"; mkdir -p "$d"
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o "$d/dzm" ./cmd/dzm
+            echo "$TAG" > "$d/VERSION"
+            cp -r LICENSES "$d/"
+            tar -C "$d" -czf "dist/dzm_linux_$arch.tar.gz" dzm VERSION LICENSES
+          done
+          "dist/pkg-amd64/dzm" version | grep -qx "$TAG"
+          bash mod/build.sh "$TAG"
+          (cd dist && sha256sum dzm_linux_amd64.tar.gz dzm_linux_arm64.tar.gz DZMBridge.zip > SHA256SUMS && cat SHA256SUMS)
+      - name: Publish (non-prerelease)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/dzm_linux_amd64.tar.gz dist/dzm_linux_arm64.tar.gz dist/DZMBridge.zip dist/SHA256SUMS \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
