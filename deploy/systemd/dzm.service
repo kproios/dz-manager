@@ -1,0 +1,34 @@
+[Unit]
+Description=DZ Manager control plane
+Wants=network-online.target
+After=network-online.target networking.service
+ConditionPathExists=/opt/dzm/current/dzm
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+User=dzm
+Group=dzm
+EnvironmentFile=/etc/dzm/dzm.env
+ExecStart=/opt/dzm/current/dzm serve
+WorkingDirectory=/var/lib/dzm
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dzm
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+MemoryMax=512M
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

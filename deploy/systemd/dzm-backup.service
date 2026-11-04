@@ -1,0 +1,8 @@
+[Unit]
+Description=Verified daily DZ Manager SQLite snapshot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dzm-backup
+TimeoutStartSec=10min
+UMask=0077
