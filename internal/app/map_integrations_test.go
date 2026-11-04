@@ -32,6 +32,48 @@ func TestLiveGroundAndLocalMarkerMetadata(t *testing.T) {
 	}
 }
 
+func TestSightingAfterEndRevivesMarkerAndActiveListedFirst(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC()
+	heli := map[string]any{"key": "boot1:heli", "category": "heli_crash", "class": "Wreck_UH1Y"}
+	e.send(ev("h-start", "event.start", now.Add(-5*time.Minute), "", []float64{7000, 0, 8000}, heli))
+	e.send(ev("h-end", "event.end", now.Add(-4*time.Minute), "", nil, map[string]any{"key": "boot1:heli"}))
+	// A stale replay from before the end must not bring it back.
+	e.send(ev("h-old", "event.seen", now.Add(-4*time.Minute-30*time.Second), "", []float64{7000, 0, 8000}, heli))
+	var markers []mapevents.Marker
+	e.JSON("GET", "/api/map/events", nil, &markers)
+	if len(markers) != 1 || markers[0].Status != "ended" {
+		t.Fatalf("after stale replay: %+v", markers)
+	}
+	// Newer history must not push the live marker down the list.
+	e.send(ev("i-start", "event.start", now.Add(-3*time.Minute), "", []float64{100, 0, 100}, map[string]any{"key": "boot1:item", "category": "tracked_item", "class": "PunchedCard"}))
+	e.send(ev("i-end", "event.end", now.Add(-2*time.Minute), "", nil, map[string]any{"key": "boot1:item"}))
+	e.send(ev("h-seen", "event.seen", now.Add(-time.Minute), "", []float64{7001, 0, 8001}, heli))
+	markers = nil // json.Unmarshal would keep fields omitted in the new response
+	e.JSON("GET", "/api/map/events", nil, &markers)
+	if len(markers) != 2 || markers[0].Key != "boot1:heli" || markers[0].Status != "active" || markers[0].EndedAt != nil {
+		t.Fatalf("revived: %+v", markers)
+	}
+}
+
+func TestPrefsArePerUserAndDurable(t *testing.T) {
+	e := setup(t)
+	var out map[string]any
+	if code := e.JSON("GET", "/api/prefs", nil, &out); code != 200 || len(out) != 0 {
+		t.Fatalf("empty prefs: %d %v", code, out)
+	}
+	if code := e.JSON("PUT", "/api/prefs", map[string]any{"map": map[string]any{"hidden": []string{"heli"}}}, nil); code != 200 {
+		t.Fatalf("save: %d", code)
+	}
+	e.JSON("GET", "/api/prefs", nil, &out)
+	if m, _ := out["map"].(map[string]any); m == nil || len(m["hidden"].([]any)) != 1 {
+		t.Fatalf("round trip: %v", out)
+	}
+	if code := e.JSON("PUT", "/api/prefs", []int{1}, nil); code != 400 {
+		t.Fatalf("non-object accepted: %d", code)
+	}
+}
+
 func TestTrackingSaveRequestsNewCensus(t *testing.T) {
 	e := setup(t)
 	cfg := mapevents.Tracking{RareItems: []string{"PunchedCard"}}

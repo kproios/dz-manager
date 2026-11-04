@@ -17,7 +17,7 @@ const paths:Record<MapIcon,string>={
  train:'<path d="M5 3h14v14H5ZM5 10h14M9 3v7m6-7v7M7 17l-3 6m13-6 3 6M5 21h14"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>',
 }
 export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train'}
-export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
+export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
 export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>):MapIcon {
  const type=(v.type+' '+v.class).toLowerCase()
  if(/motorbike|motorcycle|bicycle|bike|moped/.test(type))return 'bike'

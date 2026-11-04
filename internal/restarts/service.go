@@ -47,6 +47,10 @@ type Service struct {
 	// Publish notifies the UI.
 	Publish func()
 	Now     func() time.Time
+	// KickAll kicks every online player (optional; kick steps are skipped without it).
+	KickAll func(ctx context.Context, reason string) (int, error)
+	// OnLock records a lock state change applied by the scheduler (optional).
+	OnLock func(locked bool)
 
 	mu        sync.Mutex
 	online    map[string]bool
@@ -174,6 +178,14 @@ func (s *Service) Observe(ctx context.Context, serverID string, online bool) {
 			s.refreshCaps(ctx, s.Load(ctx, serverID))
 			s.publish()
 		}
+		// A freshly started DayZ server accepts joins again.
+		s.setLocked(false)
+	}
+}
+
+func (s *Service) setLocked(v bool) {
+	if s.OnLock != nil {
+		s.OnLock(v)
 	}
 }
 
@@ -209,12 +221,87 @@ func (s *Service) Tick(ctx context.Context) {
 	if sc.Enabled {
 		if next, ok := sc.Next(now.Add(-30 * time.Second)); ok {
 			s.announce(ctx, sc, next, now)
+			s.prepare(ctx, sc, next, now, time.Time{})
 			s.drive(ctx, sc, next, now)
 		}
 		s.detectMissed(ctx, sc, now)
 	}
+	s.manualTick(ctx, sc, now)
 	s.detectNotBack(ctx, sc, now)
 	s.gcSent(now)
+}
+
+// due reports whether a step planned for at should run now (never catches up).
+// A step planned before floor (a delayed manual restart requested late) runs at floor.
+func due(at, floor, now time.Time) bool {
+	if !floor.IsZero() && at.Before(floor) {
+		at = floor
+	}
+	return !now.Before(at) && now.Sub(at) < slot
+}
+
+// prepare locks the server and kicks everyone before a restart at next, when
+// configured. In drive mode with dry-run on it only records what it would do.
+func (s *Service) prepare(ctx context.Context, sc Schedule, next, now, floor time.Time) {
+	dry := sc.Mode == ModeDrive && sc.DryRun && floor.IsZero()
+	planned := map[string]any{"planned_for": next.UTC()}
+	if sc.LockMinutes > 0 && due(next.Add(-time.Duration(sc.LockMinutes)*time.Minute), floor, now) &&
+		s.once(fmt.Sprintf("lock:%s:%d", sc.ServerID, next.Unix())) {
+		if dry {
+			_ = s.Audit.Write(ctx, audit.System, "restart.drive_dryrun", sc.ServerID, map[string]any{"cmd": "#lock", "planned_for": next.UTC()}, "ok", "dry-run")
+		} else {
+			err := s.Exec(ctx, "#lock")
+			res, detail := "ok", "New joins are closed until the restart"
+			if err != nil {
+				res, detail = "error", err.Error()
+			} else {
+				s.setLocked(true)
+				_ = s.Exec(ctx, "say -1 Server locked for the restart at "+localClock(sc, next)+". Please finish up and log out safely.")
+			}
+			_ = s.Audit.Write(ctx, audit.System, "restart.lock", sc.ServerID, planned, res, detail)
+		}
+	}
+	if sc.KickMinutes > 0 && due(next.Add(-time.Duration(sc.KickMinutes)*time.Minute), floor, now) &&
+		s.once(fmt.Sprintf("kick:%s:%d", sc.ServerID, next.Unix())) {
+		if dry {
+			_ = s.Audit.Write(ctx, audit.System, "restart.drive_dryrun", sc.ServerID, map[string]any{"cmd": "kick all", "planned_for": next.UTC()}, "ok", "dry-run")
+			return
+		}
+		if s.KickAll == nil {
+			return
+		}
+		n, err := s.KickAll(ctx, sc.KickMessage)
+		res, detail := "ok", fmt.Sprintf("%d player(s) kicked", n)
+		if err != nil {
+			res, detail = "error", err.Error()
+		}
+		_ = s.Audit.Write(ctx, audit.System, "restart.kick_all", sc.ServerID, map[string]any{"planned_for": next.UTC(), "reason": sc.KickMessage, "kicked": n}, res, detail)
+	}
+}
+
+func localClock(sc Schedule, t time.Time) string {
+	if loc, err := time.LoadLocation(sc.Timezone); err == nil {
+		t = t.In(loc)
+	}
+	return t.Format("15:04")
+}
+
+// unlockIfLocked releases a lock DZ Manager applied for a restart that did not happen.
+func (s *Service) unlockIfLocked(ctx context.Context, serverID string, at time.Time, why string) {
+	s.mu.Lock()
+	locked := s.sent[fmt.Sprintf("lock:%s:%d", serverID, at.Unix())] || s.sent[fmt.Sprintf("drive:%s:%d:#lock", serverID, at.Unix())]
+	s.mu.Unlock()
+	if !locked {
+		return
+	}
+	err := s.Exec(ctx, "#unlock")
+	res, detail := "ok", why
+	if err != nil {
+		res, detail = "error", err.Error()
+	} else {
+		s.setLocked(false)
+	}
+	_ = s.Audit.Write(ctx, audit.System, "restart.unlock", serverID, map[string]any{"planned_for": at.UTC()}, res, detail)
 }
 
 const slot = 25 * time.Second
@@ -250,7 +337,7 @@ func (s *Service) announce(ctx context.Context, sc Schedule, next, now time.Time
 		if !s.once(k) {
 			continue
 		}
-		msg := strings.ReplaceAll(sc.AnnounceText, "{m}", fmt.Sprint(m))
+		msg := sc.Announcement(m, next)
 		err := s.Exec(ctx, "say -1 "+msg)
 		res, detail := "ok", ""
 		if err != nil {
@@ -264,10 +351,14 @@ func (s *Service) drive(ctx context.Context, sc Schedule, next, now time.Time) {
 	if sc.Mode != ModeDrive {
 		return
 	}
-	steps := []struct {
+	type step struct {
 		at  time.Time
 		cmd string
-	}{{next.Add(-time.Minute), "#lock"}, {next, "#shutdown"}}
+	}
+	steps := []step{{next, "#shutdown"}}
+	if sc.LockMinutes == 0 { // prepare() owns the lock when a lock time is configured
+		steps = []step{{next.Add(-time.Minute), "#lock"}, {next, "#shutdown"}}
+	}
 	for _, st := range steps {
 		if now.Before(st.at) || now.Sub(st.at) >= slot {
 			continue
@@ -285,6 +376,8 @@ func (s *Service) drive(ctx context.Context, sc Schedule, next, now time.Time) {
 		if err != nil {
 			res, detail = "error", err.Error()
 			s.Alert.Send("restart command " + st.cmd + " failed: " + err.Error())
+		} else if st.cmd == "#lock" {
+			s.setLocked(true)
 		}
 		_ = s.Audit.Write(ctx, audit.System, "restart.drive", sc.ServerID, map[string]any{"cmd": st.cmd, "planned_for": next.UTC()}, res, detail)
 	}
@@ -303,6 +396,8 @@ func (s *Service) detectMissed(ctx context.Context, sc Schedule, now time.Time) 
 		if n == 0 {
 			_, _ = s.DB.ExecContext(ctx, `INSERT INTO restart_events(server_id,planned_for,kind,outcome) VALUES(?,?, 'missed','missed')`, sc.ServerID, o.UTC().Format(time.RFC3339))
 			s.Alert.Send("planned restart at " + o.Format("15:04 MST") + " did not happen (provider schedule out of sync?)")
+			// Never leave players locked out after a restart that did not happen.
+			s.unlockIfLocked(ctx, sc.ServerID, o, "Restart did not happen; server unlocked again")
 			s.publish()
 		}
 	}
@@ -364,6 +459,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/restarts/schedule", s.apiPut)
 	mux.HandleFunc("POST /api/restarts/drive-verification", s.apiDriveVerify)
 	mux.HandleFunc("POST /api/restarts/now", s.apiNow)
+	mux.HandleFunc("POST /api/restarts/cancel", s.apiCancel)
 }
 
 func actor(r *http.Request) audit.Actor {
@@ -390,6 +486,10 @@ func (s *Service) apiGet(w http.ResponseWriter, r *http.Request) {
 	if next, ok := sc.Next(s.Now()); ok && sc.Enabled {
 		out["next"] = next.UTC()
 	}
+	if m, ok := s.PendingManual(r.Context(), p.ID); ok {
+		out["manual"] = m
+	}
+	out["manual_delays"] = ManualDelays
 	s.mu.Lock()
 	if on, ok := s.online[p.ID]; ok {
 		out["online"] = on
