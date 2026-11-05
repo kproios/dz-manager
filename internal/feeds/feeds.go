@@ -57,13 +57,18 @@ func Grid(x, z float64) string {
 
 func (f *Feeds) onDeath(ctx context.Context, ev bridge.Event) {
 	var d struct {
+		Killer   string  `json:"killer"`
 		Weapon   string  `json:"weapon"`
 		Cause    string  `json:"cause"`
 		Distance float64 `json:"distance_m"`
 	}
 	_ = json.Unmarshal(ev.Data, &d)
 	victim := f.name(ctx, ev.Actor)
-	if ev.Target == "" {
+	killerID := ev.Target
+	if killerID == "" {
+		killerID = d.Killer
+	}
+	if killerID == "" || killerID == ev.Actor {
 		cause := d.Cause
 		if cause == "" {
 			cause = "unknown causes"
@@ -71,7 +76,7 @@ func (f *Feeds) onDeath(ctx context.Context, ev bridge.Event) {
 		f.Bus.Publish(hooks.Event{Kind: hooks.Death, Time: ev.Time, Title: victim + " died", Text: "Cause: " + cause})
 		return
 	}
-	killer := f.name(ctx, ev.Target)
+	killer := f.name(ctx, killerID)
 	fields := []hooks.Field{{Name: "Weapon", Value: orDash(d.Weapon)}, {Name: "Distance", Value: fmt.Sprintf("%.0f m", d.Distance)}}
 	f.Bus.Publish(hooks.Event{Kind: hooks.Kill, Time: ev.Time, Title: killer + " killed " + victim, Fields: fields})
 }
