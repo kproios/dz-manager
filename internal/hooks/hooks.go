@@ -69,7 +69,8 @@ func (b *Bus) Publish(e Event) {
 	if len(b.ring) > 500 {
 		b.ring = b.ring[len(b.ring)-500:]
 	}
-	subs := append([]func(Event)(nil), b.subs...)
+	subs := make([]func(Event), len(b.subs))
+	copy(subs, b.subs)
 	b.mu.Unlock()
 	for _, f := range subs {
 		f(e)
