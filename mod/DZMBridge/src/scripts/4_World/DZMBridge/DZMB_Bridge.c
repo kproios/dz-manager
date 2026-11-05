@@ -12,6 +12,19 @@ class DZMB_CmdParams
 	string item;
 	int quantity;
 	string reason;
+	string title;
+	string text;
+}
+
+// One entry of a ban list exported by a local adapter (see CollectExternalBans).
+class DZMB_ExtBan
+{
+	string steam64;
+	string name;
+	string reason;
+	string by;
+	int banned_at;
+	int duration;
 }
 
 class DZMB_Cmd
@@ -94,6 +107,11 @@ class DZMB_Bridge
 	protected int m_ScanEvents;
 	protected int m_ScanItems;
 	protected int m_ScanStarted;
+	protected float m_BanListAcc;
+	protected bool m_BanListSent;
+	protected string m_BanListHash;
+	protected float m_BanListAge;
+	protected ref map<string, int> m_RaidThrottle = new map<string, int>;
 
 	static DZMB_Bridge Get()
 	{
@@ -132,6 +150,7 @@ class DZMB_Bridge
 		m_Commands.Insert("heal");
 		m_Commands.Insert("kill");
 		m_Commands.Insert("strip");
+		m_Commands.Insert("notify");
 		Emit("server.start", "", "", "{}", false, "0 0 0");
 		Heartbeat();
 		DZMB_Log.Info("v" + DZMB_VERSION + " started, ingest " + DZMB_Config.Get().ingest_url);
@@ -202,6 +221,15 @@ class DZMB_Bridge
 				if (tracked && !m_LocalEntities.Contains(tracked)) refresh.Insert(tracked);
 			foreach (EntityAI current : refresh) OnEntitySpawned(current);
 			RefreshLocalMarkers();
+		}
+		// Exported ban lists: first after ~3 minutes, then every 10 minutes when
+		// changed, and at least every 6 hours so the panel's copy stays fresh.
+		m_BanListAcc += dt;
+		m_BanListAge += dt;
+		if (m_BanListAcc >= 600 || (!m_BanListSent && GetGame().GetTime() > 180000))
+		{
+			m_BanListAcc = 0;
+			SyncExternalBans();
 		}
 		if (m_BeatAcc >= cfg.heartbeat_seconds)
 		{
@@ -317,6 +345,11 @@ class DZMB_Bridge
 			Result(c.id, true, "", ListPlayers());
 			return;
 		}
+		if (c.action == "notify")
+		{
+			DoNotify(c);
+			return;
+		}
 		PlayerBase p = FindPlayer(c.target);
 		if (!p)
 		{
@@ -348,6 +381,157 @@ class DZMB_Bridge
 			default:
 				Result(c.id, false, "unsupported action " + c.action, "null");
 		}
+	}
+
+	// ---- notifications ----
+
+	protected void DoNotify(DZMB_Cmd c)
+	{
+		string text = c.params.text;
+		if (text == "")
+		{
+			Result(c.id, false, "text is required", "null");
+			return;
+		}
+		string title = c.params.title;
+		if (title == "")
+			title = "Server";
+		int sent = 0;
+		array<Man> all = new array<Man>;
+		GetGame().GetPlayers(all);
+		foreach (Man m : all)
+		{
+			if (!m || !m.GetIdentity())
+				continue;
+			if (c.target != "" && m.GetIdentity().GetPlainId() != c.target)
+				continue;
+			SendNotify(m.GetIdentity(), title, text);
+			sent++;
+		}
+		if (c.target != "" && sent == 0)
+		{
+			Result(c.id, false, "player is not online", "null");
+			return;
+		}
+		Result(c.id, true, "", "{\"sent\":" + sent.ToString() + "}");
+	}
+
+	// On-screen notification. Local adapters may override this (for example to
+	// use the LB notification UI); the default is DayZ's own notification.
+	void SendNotify(PlayerIdentity identity, string title, string text)
+	{
+		NotificationSystem.SendNotificationToPlayerIdentityExtended(identity, 10, title, text, "");
+	}
+
+	// ---- raids ----
+
+	// A player (or an explosive) damaged a base-building object.
+	void OnRaidHit(EntityAI target, EntityAI source, string zone, string ammo)
+	{
+		if (!target || !source)
+			return;
+		PlayerBase attacker = PlayerBase.Cast(source.GetHierarchyRootPlayer());
+		if (!attacker)
+			attacker = PlayerBase.Cast(source);
+		string tool = source.GetType();
+		bool explosive = ammo.IndexOf("Explosion") >= 0 || tool.IndexOf("Explosive") >= 0 || tool.IndexOf("Grenade") >= 0 || tool.IndexOf("Charge") >= 0;
+		if (!attacker && !explosive)
+			return; // infected, animals, vehicles and weather are not raids
+		string actor = "";
+		if (attacker && attacker.GetIdentity())
+			actor = attacker.GetIdentity().GetPlainId();
+		int lo, hi;
+		target.GetNetworkID(lo, hi);
+		string key = lo.ToString() + ":" + hi.ToString() + ":" + actor;
+		int now = GetGame().GetTime();
+		int last;
+		if (m_RaidThrottle.Find(key, last) && now - last < 60000)
+			return; // one report per attacker and object per minute
+		if (m_RaidThrottle.Count() > 500)
+			m_RaidThrottle.Clear();
+		m_RaidThrottle.Set(key, now);
+		string detail = tool;
+		if (ammo != "")
+			detail = tool + " / " + ammo;
+		EmitRaid("raid.hit", actor, target, zone, detail, target.GetHealth01("", ""));
+	}
+
+	// A base-building part was destroyed (by damage or a destroy action).
+	void OnRaidDestroyed(EntityAI target, Man player, string part)
+	{
+		string actor = "";
+		if (player && player.GetIdentity())
+			actor = player.GetIdentity().GetPlainId();
+		EmitRaid("raid.destroyed", actor, target, part, "", target.GetHealth01("", ""));
+	}
+
+	// Public so local adapters can report other raids (for example LB code locks).
+	void EmitRaid(string type, string actor, EntityAI target, string part, string detail, float health01)
+	{
+		if (!target)
+			return;
+		DZMB_Json d = new DZMB_Json();
+		d.Str("class", target.GetType()).Str("part", part).Str("detail", detail).Num("health_pct", health01 * 100);
+		Emit(type, actor, "", d.End(), true, target.GetPosition());
+	}
+
+	// ---- exported ban lists ----
+
+	// Local adapters return a list name and fill the entries (for example the
+	// LB Admin Tools global banlist). The panel stores it for review only.
+	string ExternalBanListName()
+	{
+		return "";
+	}
+
+	void CollectExternalBans(array<ref DZMB_ExtBan> bans)
+	{
+	}
+
+	protected void SyncExternalBans()
+	{
+		m_BanListSent = true;
+		string listName = ExternalBanListName();
+		if (listName == "")
+			return;
+		array<ref DZMB_ExtBan> bans = new array<ref DZMB_ExtBan>;
+		CollectExternalBans(bans);
+		array<string> rows = new array<string>;
+		string hash = listName;
+		foreach (DZMB_ExtBan ban : bans)
+		{
+			if (!ban || ban.steam64 == "")
+				continue;
+			DZMB_Json row = new DZMB_Json();
+			row.Str("steam64", ban.steam64).Str("name", ban.name).Str("reason", ban.reason).Str("by", ban.by).IntV("banned_at", ban.banned_at).IntV("duration", ban.duration);
+			string rowJson = row.End();
+			rows.Insert(rowJson);
+			hash += rowJson;
+		}
+		if (hash == m_BanListHash && m_BanListAge < 21600)
+			return;
+		m_BanListHash = hash;
+		m_BanListAge = 0;
+		int per = 40;
+		int parts = (rows.Count() + per - 1) / per;
+		if (parts < 1)
+			parts = 1;
+		string snapshot = m_Boot + "-" + GetGame().GetTime().ToString();
+		for (int p = 0; p < parts; p++)
+		{
+			string entries = "[";
+			for (int i = p * per; i < rows.Count() && i < (p + 1) * per; i++)
+			{
+				if (i > p * per)
+					entries += ",";
+				entries += rows[i];
+			}
+			entries += "]";
+			DZMB_Json chunk = new DZMB_Json();
+			chunk.Str("list", listName).Str("snapshot", snapshot).IntV("part", p).IntV("parts", parts).Raw("entries", entries);
+			Emit("banlist.chunk", "", "", chunk.End(), false, "0 0 0");
+		}
+		DZMB_Log.Info("exported ban list '" + listName + "': " + rows.Count().ToString() + " entries in " + parts.ToString() + " part(s)");
 	}
 
 	protected string ListPlayers()

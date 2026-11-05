@@ -16,6 +16,8 @@ const names: Record<string,string> = {
  'profile.create':'Server added', 'profile.update':'Server settings changed', 'profile.reveal_wizard':'Connection configs viewed',
  'profile.activate':'Active server changed', 'profile.archive':'Server archived', 'profile.rotate_ingest':'Ingest keys rotated',
  'priority.add':'Added to priority queue', 'priority.remove':'Removed from priority queue', 'priority.applied':'Priority queue marked applied',
+ 'raid.hit':'Base under attack', 'raid.destroyed':'Base part destroyed', 'raid.codelock':'Code lock raided',
+ 'banlist.sync':'External ban list synced from the server', 'settings.intel_update':'Player check settings changed', 'settings.messages_update':'Automatic messages changed',
  'event.start':'World event detected', 'event.end':'World event ended', 'item.spawn':'Item spawned',
  'item.observed':'Ground item first observed', 'server.start':'Server started', heartbeat:'Connection heartbeat',
 }
@@ -39,7 +41,7 @@ const labels:Record<string,string> = { times:'Restart times', timezone:'Timezone
  delay_minutes:'Countdown (minutes)', minutes:'Minutes before', reason:'Reason', message:'Message', x:'X (east)', z:'Z (north)', y:'Altitude',
  event_classes:'Event classes', rare_items:'Tracked item classes', in_inventory:'Added to inventory', on_ground:'Placed on ground',
  to_player:'Destination player', item:'Item class', quantity:'Quantity', cmd:'Command', planned_for:'Planned restart', alive:'Player alive',
- has_y:'Altitude given', revision:'Revision', class:'Class', category:'Category', victim:'Victim', killer:'Killer', weapon:'Weapon', distance_m:'Distance (m)', cause:'Cause' }
+ has_y:'Altitude given', revision:'Revision', part:'Part', detail:'Tool / detail', health_pct:'Health left (%)', class:'Class', category:'Category', victim:'Victim', killer:'Killer', weapon:'Weapon', distance_m:'Distance (m)', cause:'Cause' }
 export function displayValue(key:string,value:unknown):string {
  if (typeof value==='boolean') return value?'Yes':'No'
  if (value==null || value==='') return '—'

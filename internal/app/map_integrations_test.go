@@ -56,6 +56,40 @@ func TestSightingAfterEndRevivesMarkerAndActiveListedFirst(t *testing.T) {
 	}
 }
 
+func TestRaidEventsBecomeMapMarkers(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC()
+	e.send(ev("r1", "raid.hit", now.Add(-time.Minute), steamA, []float64{4010, 0, 9010}, map[string]any{"class": "Fence", "part": "wall_base_down", "detail": "SledgeHammer"}))
+	e.send(ev("r2", "raid.destroyed", now, steamA, []float64{4015, 0, 9012}, map[string]any{"class": "Fence", "part": "wall_wood_down"}))
+	var markers []mapevents.Marker
+	e.JSON("GET", "/api/map/events", nil, &markers)
+	if len(markers) != 1 || markers[0].Category != "raid" || markers[0].Status != "active" || markers[0].Name != "Base part destroyed" {
+		t.Fatalf("raid markers: %+v", markers)
+	}
+}
+
+func TestBridgeBanlistChunksBecomeExternalList(t *testing.T) {
+	e := setup(t)
+	now := time.Now().UTC()
+	entry := func(id string, dur int64) map[string]any {
+		return map[string]any{"steam64": id, "name": "x", "reason": "cheating", "by": "Admin", "banned_at": now.Add(-48 * time.Hour).Unix(), "duration": dur}
+	}
+	chunk := func(part int, entries ...map[string]any) map[string]any {
+		return map[string]any{"list": "LB global banlist", "snapshot": "s1", "part": part, "parts": 2, "entries": entries}
+	}
+	e.send(ev("b0", "banlist.chunk", now, "", nil, chunk(0, entry("76561198000000011", -1), entry("76561198000000012", 3600))))
+	var lists []map[string]any
+	e.JSON("GET", "/api/banlists", nil, &lists)
+	if len(lists) != 0 {
+		t.Fatalf("list stored before all parts arrived: %v", lists)
+	}
+	e.send(ev("b1", "banlist.chunk", now, "", nil, chunk(1, entry("76561198000000013", -1), entry("not-a-steam-id", -1))))
+	e.JSON("GET", "/api/banlists", nil, &lists)
+	if len(lists) != 1 || lists[0]["name"] != "LB global banlist" || lists[0]["entries"] != float64(2) {
+		t.Fatalf("lists: %v", lists)
+	}
+}
+
 func TestPrefsArePerUserAndDurable(t *testing.T) {
 	e := setup(t)
 	var out map[string]any

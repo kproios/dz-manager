@@ -509,47 +509,47 @@ func (s *Service) importList(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, 400, map[string]any{"error": "import rejected", "problems": errs})
 		return
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
+	listID, err := s.ReplaceList(ctx, in.Name, in.Source, entries)
 	if err != nil {
-		httpx.Error(w, 500, err.Error())
-		return
-	}
-	defer tx.Rollback()
-	now := s.now().UTC().Format(time.RFC3339)
-	var listID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM external_lists WHERE name=?`, in.Name).Scan(&listID)
-	if errors.Is(err, sql.ErrNoRows) {
-		res, err := tx.ExecContext(ctx, `INSERT INTO external_lists(name,source,imported_at,entries) VALUES(?,?,?,0)`, in.Name, clean(in.Source, 300), now)
-		if err != nil {
-			httpx.Error(w, 500, err.Error())
-			return
-		}
-		listID, _ = res.LastInsertId()
-	} else if err != nil {
-		httpx.Error(w, 500, err.Error())
-		return
-	}
-	// Re-import replaces the list's entries (a new revision of the same source).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM external_entries WHERE list_id=?`, listID); err != nil {
-		httpx.Error(w, 500, err.Error())
-		return
-	}
-	for _, e := range entries {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO external_entries(list_id,identifier,identifier_type,reason,listed_at) VALUES(?,?,?,?,?)`, listID, e.Identifier, e.Type, e.Reason, e.ListedAt); err != nil {
-			httpx.Error(w, 500, err.Error())
-			return
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE external_lists SET imported_at=?, entries=?, source=? WHERE id=?`, now, len(entries), clean(in.Source, 300), listID); err != nil {
-		httpx.Error(w, 500, err.Error())
-		return
-	}
-	if err := tx.Commit(); err != nil {
 		httpx.Error(w, 500, err.Error())
 		return
 	}
 	_ = s.Audit.Write(ctx, actor(r), "banlist.import", in.Name, map[string]any{"entries": len(entries), "source": in.Source}, "ok", "")
 	httpx.JSON(w, 200, map[string]any{"list_id": listID, "entries": len(entries)})
+}
+
+// ReplaceList stores a new revision of an external list (all entries replaced).
+// Entries are evidence for review only; nothing is enforced from them.
+func (s *Service) ReplaceList(ctx context.Context, name, source string, entries []Entry) (int64, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Format(time.RFC3339)
+	var listID int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM external_lists WHERE name=?`, name).Scan(&listID)
+	if errors.Is(err, sql.ErrNoRows) {
+		res, err := tx.ExecContext(ctx, `INSERT INTO external_lists(name,source,imported_at,entries) VALUES(?,?,?,0)`, name, clean(source, 300), now)
+		if err != nil {
+			return 0, err
+		}
+		listID, _ = res.LastInsertId()
+	} else if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM external_entries WHERE list_id=?`, listID); err != nil {
+		return 0, err
+	}
+	for _, e := range entries {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO external_entries(list_id,identifier,identifier_type,reason,listed_at) VALUES(?,?,?,?,?)`, listID, e.Identifier, e.Type, e.Reason, e.ListedAt); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE external_lists SET imported_at=?, entries=?, source=? WHERE id=?`, now, len(entries), clean(source, 300), listID); err != nil {
+		return 0, err
+	}
+	return listID, tx.Commit()
 }
 
 // List is an external list summary.
