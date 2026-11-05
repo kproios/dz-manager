@@ -2,7 +2,9 @@ package restarts
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kproios/dz-manager/internal/hooks"
@@ -10,7 +12,8 @@ import (
 )
 
 // Skipping one planned restart: DZ Manager sends no warnings, lock, kick or
-// shutdown for that occurrence and does not report it as missed. In provider
+// shutdown for that occurrence and does not report it as missed. A skip made
+// after the countdown began also undoes it (unlock, tell players). In provider
 // mode the provider's own schedule still restarts the server.
 
 func skipKey(id string) string { return "restart_skip:" + id }
@@ -36,6 +39,26 @@ func (s *Service) SkippedAt(ctx context.Context, serverID string) (time.Time, bo
 
 func (s *Service) clearSkip(ctx context.Context, serverID string) {
 	_, _ = s.DB.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, skipKey(serverID))
+}
+
+// cancelStarted stops a restart that is already under way when it is skipped:
+// a lock DZ Manager applied is released and players who were warned or kicked
+// are told the restart is off. Nothing else for that occurrence runs afterwards.
+func (s *Service) cancelStarted(ctx context.Context, sc Schedule, at time.Time) {
+	s.mu.Lock()
+	warned := s.sent[fmt.Sprintf("kick:%s:%d", sc.ServerID, at.Unix())]
+	prefix := fmt.Sprintf("ann:%s:%d:", sc.ServerID, at.Unix())
+	for k := range s.sent {
+		if strings.HasPrefix(k, prefix) {
+			warned = true
+			break
+		}
+	}
+	s.mu.Unlock()
+	s.unlockIfLocked(ctx, sc.ServerID, at, "Restart skipped; server unlocked again")
+	if warned {
+		_ = s.Exec(ctx, "say -1 The "+localClock(sc, at)+" restart is cancelled. Carry on!")
+	}
 }
 
 // apiSkip skips (skip=true) or restores (skip=false) the next planned restart.
@@ -71,6 +94,7 @@ func (s *Service) apiSkip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Audit.Write(r.Context(), actor(r), "restart.skip", p.ID, map[string]any{"planned_for": next.UTC()}, "ok", "")
+	s.cancelStarted(r.Context(), sc, next)
 	s.hook(hooks.Restart, "The "+localClock(sc, next)+" restart is skipped", "The server keeps running until the following planned restart.")
 	s.publish()
 	httpx.JSON(w, 200, map[string]any{"skipped": true, "planned_for": next.UTC()})

@@ -180,14 +180,20 @@ function Side({ status, onShowOnMap }: { status?: ServerStatus | null; onShowOnM
         ))}
       </div>
       <div className="side-send">
-        <div className="row">
-          <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Recipient" disabled={!rconOk} style={{ width: 130, flex: 'none' }}>
+        <div className="send-to">
+          <span className="muted small">To</span>
+          <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Recipient" disabled={!rconOk}>
             <option value="">Everyone</option>
             {players.map((p) => <option key={p.be_guid} value={p.be_guid}>{p.name}</option>)}
           </select>
-          <input value={msg} maxLength={200} disabled={!rconOk || busy} placeholder={rconOk ? (to ? 'Private message…' : 'Message to all players…') : 'RCON not connected'}
-            onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send() }} />
-          <button className="primary icon" style={{ width: 34, height: 30, flex: 'none' }} disabled={!rconOk || busy || !msg.trim()} onClick={send} title="Send (Enter)"><Icon name="send" /></button>
+          <span className={'muted small nowrap' + (msg.length > 180 ? ' warn' : '')}>{msg.length}/200</span>
+        </div>
+        <div className="send-box">
+          {/* RCON "say" is one line: Enter sends, line breaks are never inserted. */}
+          <textarea value={msg} maxLength={200} rows={3} disabled={!rconOk || busy} aria-label="Message"
+            placeholder={rconOk ? (to ? 'Private message… (Enter sends)' : 'Message to all players… (Enter sends)') : 'RCON not connected'}
+            onChange={(e) => setMsg(e.target.value.replace(/[\r\n]+/g, ' '))} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); send() } }} />
+          <button className="primary" disabled={!rconOk || busy || !msg.trim()} onClick={send} title="Send (Enter)"><Icon name="send" />Send</button>
         </div>
       </div>
     </aside>

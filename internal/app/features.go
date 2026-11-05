@@ -13,7 +13,6 @@ import (
 	"github.com/kproios/dz-manager/internal/discord"
 	"github.com/kproios/dz-manager/internal/feeds"
 	"github.com/kproios/dz-manager/internal/hooks"
-	"github.com/kproios/dz-manager/internal/hostctl"
 	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
@@ -132,10 +131,8 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	bot.RegisterAdmin(srv.API)
 	bot.RegisterPublic(srv.Public)
 
-	// Emergency kill over SSH and data retention with compressed archives.
-	a.HostCtl = &hostctl.Service{DB: a.DB, Box: a.Box, Audit: srv.Audit, DataDir: a.Cfg.DataDir}
-	a.HostCtl.Init()
-	a.HostCtl.Register(srv.API)
+	// Data retention with compressed archives. (The SSH emergency kill was
+	// removed: Managed gives no SSH and RCON cannot stop a frozen process.)
 	a.Retention = &retention.Service{DB: a.DB, Audit: srv.Audit, Log: srv.Log, DataDir: a.Cfg.DataDir}
 	a.Retention.Register(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "retention", a.Retention.Run) })

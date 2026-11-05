@@ -18,7 +18,6 @@ import (
 	"github.com/kproios/dz-manager/internal/config"
 	"github.com/kproios/dz-manager/internal/discord"
 	"github.com/kproios/dz-manager/internal/hooks"
-	"github.com/kproios/dz-manager/internal/hostctl"
 	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
@@ -54,7 +53,6 @@ type App struct {
 	AutoMsg      *automsg.Service
 	Hooks        *hooks.Bus
 	Discord      *discord.Service
-	HostCtl      *hostctl.Service
 	Retention    *retention.Service
 	BridgeExtras []func(context.Context) map[string]any
 

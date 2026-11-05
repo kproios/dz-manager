@@ -26,7 +26,7 @@ import (
 var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag", "raid", "death"}
 
 // deathTTL keeps a death on the live map; afterwards it stays in history.
-const deathTTL = 30 * time.Minute
+const deathTTL = time.Minute
 
 // raidTTL keeps a raid marker on the map after the last hit.
 const raidTTL = 30 * time.Minute
@@ -101,7 +101,7 @@ func (s *Service) playerName(ctx context.Context, steam64 string) string {
 }
 
 // onDeath puts the victim (and killer, when a player killed them) on the map:
-// live for 30 minutes, then in the history timeline.
+// live for one minute, then in the history timeline.
 func (s *Service) onDeath(ctx context.Context, ev bridge.Event) {
 	if ev.Pos == nil || ev.Actor == "" {
 		return

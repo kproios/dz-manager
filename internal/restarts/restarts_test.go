@@ -240,6 +240,44 @@ func TestSkipNextRestart(t *testing.T) {
 	}
 }
 
+// A skip pressed after warnings and the lock went out stops everything that is
+// left, unlocks the server and tells players; no kick, no shutdown.
+func TestSkipDuringCountdown(t *testing.T) {
+	e, svc, c, sent, id := setup(t)
+	ctx := context.Background()
+	var kicks int
+	svc.KickAll = func(context.Context, string) (int, error) { kicks++; return 1, nil }
+	sc := sched("12:00", "16:00")
+	sc.ServerID, sc.Mode, sc.DryRun, sc.Announce, sc.LockMinutes, sc.KickMinutes = id, restarts.ModeDrive, false, true, 5, 2
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	e.JSON("POST", "/api/restarts/drive-verification", map[string]any{"verified": true, "evidence": "test"}, nil)
+	svc.Observe(ctx, id, true)
+	tick := func(from, to time.Time) {
+		for at := from; at.Before(to); at = at.Add(10 * time.Second) {
+			c.set(at)
+			svc.Tick(ctx)
+		}
+	}
+	tick(time.Date(2026, 11, 4, 11, 40, 0, 0, helsinki), time.Date(2026, 11, 4, 11, 56, 0, 0, helsinki))
+	if got := strings.Join(*sent, "|"); !strings.Contains(got, "#lock") {
+		t.Fatalf("countdown did not start: %s", got)
+	}
+	*sent = nil
+	if code := e.JSON("POST", "/api/restarts/skip", map[string]bool{"skip": true}, nil); code != 200 {
+		t.Fatalf("skip: %d", code)
+	}
+	tick(time.Date(2026, 11, 4, 11, 56, 0, 0, helsinki), time.Date(2026, 11, 4, 12, 7, 0, 0, helsinki))
+	got := strings.Join(*sent, "|")
+	if !strings.HasPrefix(got, "#unlock|say -1 The 12:00 restart is cancelled.") || strings.Contains(got, "#shutdown") || strings.Contains(got, "minute") || kicks != 0 {
+		t.Fatalf("after skip: %q kicks=%d", got, kicks)
+	}
+	if evs, _ := svc.Events(ctx, id, 10); len(evs) != 0 {
+		t.Fatalf("skipped restart reported: %+v", evs)
+	}
+}
+
 type clock struct {
 	mu sync.Mutex
 	t  time.Time

@@ -161,6 +161,16 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
   }, [data, show.vehicles, hidden, vehicleRules])
 
   const sites = useMemo(() => groupMarkers(events.data ?? []), [events.data])
+  // Which layer a marker belongs to, so the draw loop and the "hidden" notice agree.
+  const markerLayer = (m: Marker) => {
+    const kind = markerIcon(m)
+    const item = ['tracked_item', 'rare_item'].includes(m.category) || (m.category === 'custom' && ['item', 'weapon'].includes(m.kind || ''))
+    const base = m.category === 'base_flag'
+    const transient = m.category === 'death' || m.category === 'raid'
+    const hiddenBy = hidden.has(kind) ? 'icon' : (!show.items && item) || (!show.bases && base) || (transient && !show.deaths) || (!show.events && !item && !base && !transient) ? 'layer' : ''
+    return { kind, item, base, transient, hiddenBy }
+  }
+  const hiddenActive = (events.data ?? []).filter((m) => m.status === 'active' && markerLayer(m).hiddenBy).length
   // Timeline: history shows only what started inside the selected slice of time.
   const range = histHours * 3600000
   const sliceLen = Math.max(30 * 60000, range / 6)
@@ -172,13 +182,11 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
     if (!groups.events) return
     for (const name of ['events', 'items', 'bases']) groups[name].clearLayers()
     for (const site of sites) {
-      const m = site.marker, kind = markerIcon(m)
-      const item = ['tracked_item', 'rare_item'].includes(m.category) || (m.category === 'custom' && ['item', 'weapon'].includes(m.kind || ''))
-      const base = m.category === 'base_flag'
-      const transient = m.category === 'death' || m.category === 'raid'
+      const m = site.marker
+      const { kind, item, base, hiddenBy } = markerLayer(m)
       const focusedOne = !!focusKey && m.key === focusKey
       if (!focusedOne) {
-        if (hidden.has(kind) || (!show.items && item) || (!show.bases && base) || (transient && !show.deaths) || (!show.events && !item && !base && !transient)) continue
+        if (hiddenBy) continue
         if (m.status !== 'active') {
           if (!show.ended) continue
           const t = new Date(m.started_at).getTime()
@@ -270,6 +278,10 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
       </div>
       {tilesOk === false && <div className="warnings">Map tiles are not installed in /var/lib/dzm/tiles/chernarusplus (see docs/install-game-side.md). Markers still work.</div>}
       {data && !data.available && <div className="warnings">{data.reason}</div>}
+      {hiddenActive > 0 && <div className="warnings row" role="status">
+        <Icon name="events" /><span><b>{hiddenActive} active event{hiddenActive === 1 ? '' : 's'}</b> hidden by your map filters{hidden.size ? ` (hidden icons: ${[...hidden].map((k) => iconLabels[k]).join(', ')})` : ''}.</span>
+        <button className="small" style={{ marginLeft: 'auto' }} onClick={() => { setLayers({ ...show, events: true, items: true, bases: true, deaths: true }); setHiddenList([]) }}>Show all</button>
+      </div>}
       {(events.error || state.error) && <div className="warnings" role="status">Couldn’t refresh the map ({events.error || state.error}). Retrying automatically…</div>}
       <div className="mapbody">
         <div ref={el} className="map" />
@@ -283,11 +295,12 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
         <div className="timeline" role="group" aria-label="History timeline">
           <Seg label="History range" value={histHours} onChange={(v) => { setHistHours(v); setHistPos(100) }} options={HISTORY} />
           <input type="range" min={0} max={100} step={1} value={histPos} onChange={(e) => setHistPos(+e.target.value)} aria-label="Point in time" />
+          {/* Fixed-width label and an always-present button: the slider must never change size while it is dragged. */}
           <span className="timeline-label">
-            {new Date(sliceStart).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} – {histPos === 100 ? 'now' : new Date(sliceEnd).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
-            <span className="muted"> · {(events.data ?? []).filter((m) => m.status !== 'active' && +new Date(m.started_at) >= sliceStart && +new Date(m.started_at) <= sliceEnd).length} past events</span>
+            <span>{new Date(sliceStart).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} – {histPos === 100 ? 'now' : new Date(sliceEnd).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}</span>
+            <span className="muted">{(events.data ?? []).filter((m) => m.status !== 'active' && +new Date(m.started_at) >= sliceStart && +new Date(m.started_at) <= sliceEnd).length} past events</span>
           </span>
-          {histPos !== 100 && <button className="small ghost" onClick={() => setHistPos(100)}>Back to now</button>}
+          <button className="small ghost" disabled={histPos === 100} style={{ visibility: histPos === 100 ? 'hidden' : 'visible' }} onClick={() => setHistPos(100)}>Back to now</button>
         </div>
       )}
       <div className="legend small">

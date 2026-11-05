@@ -2,7 +2,7 @@
 // HTTP wrapper adapted from DayZ-Takaro-Integration (MIT). DayZ RestContext
 // cannot send custom headers reliably, so the server token travels in the URL path.
 
-const string DZMB_VERSION = "0.1.9";
+const string DZMB_VERSION = "0.1.10";
 const string DZMB_DIR = "$profile:DZMBridge";
 const string DZMB_CONFIG = "$profile:DZMBridge/config.json";
 
