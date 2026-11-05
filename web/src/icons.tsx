@@ -28,6 +28,14 @@ const paths = {
   megaphone: 'M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1Zm13-3a5 5 0 0 1 0 8',
   plus: 'M12 5v14M5 12h14',
   logo: 'M12 2 3 7v10l9 5 9-5V7Zm0 0v20M3 7l9 5 9-5',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Zm0-14v4m0 4h.01',
+  live: 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm4.2-5.2a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4m11.3-2.8a10 10 0 0 1 0 14M4.9 19a10 10 0 0 1 0-14',
+  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm10 2-4.3-4.3',
+  refresh: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
+  eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
+  sort: 'M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3',
+  chat: 'M21 12a8 8 0 0 1-11.8 7L3 21l2-5.5A8 8 0 1 1 21 12Z',
 }
 export type IconName = keyof typeof paths
 export function Icon({ name, title }: { name: IconName; title?: string }) {

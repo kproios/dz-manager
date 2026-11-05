@@ -5,6 +5,9 @@ import (
 
 	"github.com/kproios/dz-manager/internal/actions"
 	"github.com/kproios/dz-manager/internal/alert"
+	"github.com/kproios/dz-manager/internal/automsg"
+	"github.com/kproios/dz-manager/internal/chat"
+	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/bans"
 	"github.com/kproios/dz-manager/internal/bridge"
 	"github.com/kproios/dz-manager/internal/mapevents"
@@ -28,6 +31,13 @@ func (a *App) registerFeatures(ctx context.Context) error {
 		Publish: func(s rcon.Status) {
 			srv.Hub.Publish("server_status", s)
 			a.Restarts.Observe(context.Background(), s.ServerID, s.Online())
+			if a.Intel != nil {
+				seen := make([]intel.Seen, 0, len(s.Players))
+				for _, p := range s.Players {
+					seen = append(seen, intel.Seen{BEGUID: p.BEGUID, IP: p.IP})
+				}
+				a.Intel.Observe(context.Background(), seen)
+			}
 		}}
 	a.RCON.Init()
 	(&rcon.API{Mon: a.RCON, Audit: srv.Audit}).Register(srv.API)
@@ -79,6 +89,25 @@ func (a *App) registerFeatures(ctx context.Context) error {
 
 	// #13 priority queue, phase 1 (list + export; the provider applies it).
 	(&priority.API{DB: a.DB, Audit: srv.Audit}).Register(srv.API)
+
+	// Player intel (Steam profile/bans, IP country/VPN), RCON chat and automatic messages.
+	a.Intel = &intel.Service{DB: a.DB, Box: a.Box, Audit: srv.Audit, Log: srv.Log,
+		Publish: func() { srv.Hub.Publish("intel", map[string]bool{"changed": true}) }}
+	a.Intel.Init()
+	a.Intel.Register(srv.API)
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "intel", a.Intel.Run) })
+	a.Chat = &chat.Service{DB: a.DB, Profiles: a.Profiles, Log: srv.Log,
+		Publish: func() { srv.Hub.Publish("chat", map[string]bool{"changed": true}) }}
+	a.Chat.Register(srv.API)
+	a.RCON.OnMessage = a.Chat.OnMessage
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "chat", a.Chat.Run) })
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "rcon-pump", a.RCON.Pump) })
+	a.AutoMsg = &automsg.Service{DB: a.DB, Profiles: a.Profiles, Bridge: a.Bridge, Audit: srv.Audit, Log: srv.Log, Roster: a.RCON.FreshPlayers}
+	a.AutoMsg.Exec = func(ctx context.Context, cmd string) error { _, _, err := a.RCON.Exec(ctx, cmd); return err }
+	a.AutoMsg.Init()
+	a.AutoMsg.Attach(a.Bridge)
+	a.AutoMsg.Register(srv.API)
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "auto-messages", a.AutoMsg.Run) })
 
 	_ = ctx
 	return nil

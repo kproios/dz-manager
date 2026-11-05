@@ -18,10 +18,15 @@ const paths:Record<MapIcon,string>={
 }
 export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train'}
 export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
-export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>):MapIcon {
- const type=(v.type+' '+v.class).toLowerCase()
- if(/motorbike|motorcycle|bicycle|bike|moped/.test(type))return 'bike'
- if(/boat|zodiac|jetski/.test(type))return 'boat'
+export interface VehicleRule { match:string; kind:MapIcon }
+export const vehicleKinds:MapIcon[]=['car','bike','boat','heli','convoy','plane','police','train']
+/** Owner rules (classname contains `match`, case-insensitive) win over the built-in guesses. */
+export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>,rules:VehicleRule[]=[]):MapIcon {
+ const cls=(v.class||'').toLowerCase()
+ for(const r of rules) if(r.match&&cls.includes(r.match.toLowerCase())&&vehicleKinds.includes(r.kind))return r.kind
+ const type=((v.type||'')+' '+v.class).toLowerCase()
+ if(/motorbike|motorcycle|bicycle|bike|moped|scooter|quad|atv|dirtbike/.test(type))return 'bike'
+ if(/boat|zodiac|jetski|rhib|kayak|raft|ship|watercraft/.test(type))return 'boat'
  if(/helicopter|heli/.test(type))return 'heli'
  if(/truck|v3s|ural/.test(type))return 'convoy'
  return 'car'

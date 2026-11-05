@@ -4,7 +4,7 @@ import { useHashRoute } from './hooks'
 import { Toast } from './ui'
 import { Icon, IconName } from './icons'
 import Dashboard from './pages/Dashboard'
-import MapPage from './pages/MapPage'
+import Live from './pages/Live'
 import Players from './pages/Players'
 import PlayerPage from './pages/PlayerPage'
 import Events from './pages/Events'
@@ -18,7 +18,7 @@ const NotifyCtx = createContext<Notify>(() => {})
 export const useNotify = () => useContext(NotifyCtx)
 
 const nav: [string, string, IconName][] = [
-  ['dashboard', 'Dashboard', 'dashboard'], ['map', 'Live map', 'map'], ['players', 'Players', 'players'], ['events', 'Events', 'events'],
+  ['dashboard', 'Dashboard', 'dashboard'], ['live', 'Live', 'live'], ['players', 'Player database', 'players'], ['events', 'Events', 'events'],
   ['restarts', 'Restarts', 'restarts'], ['bans', 'Bans', 'bans'], ['settings', 'Settings', 'settings'], ['audit', 'Audit log', 'audit'],
 ]
 
@@ -43,7 +43,8 @@ export default function App() {
 
   let page
   switch (route) {
-    case 'map': page = <MapPage />; break
+    case 'live': page = <Live tab={args[0]} />; break
+    case 'map': page = <Live tab="map" />; break
     case 'players': page = args[0] ? <PlayerPage id={args[0]} /> : <Players />; break
     case 'events': page = <Events />; break
     case 'restarts': page = <Restarts />; break
@@ -55,12 +56,12 @@ export default function App() {
 
   return (
     <NotifyCtx.Provider value={notify}>
-      <div className={'layout' + (route === 'map' ? ' wide' : '')}>
+      <div className={'layout' + (route === 'map' || route === 'live' ? ' wide' : '')}>
         <aside>
           <div className="brand"><Icon name="logo" />DZ Manager</div>
           <nav>
             {nav.map(([k, label, icon]) => (
-              <a key={k} href={'#/' + k} className={route === k ? 'active' : ''} aria-current={route === k ? 'page' : undefined}><Icon name={icon} />{label}</a>
+              <a key={k} href={'#/' + k} className={route === k || (k === 'live' && route === 'map') ? 'active' : ''} aria-current={route === k ? 'page' : undefined}><Icon name={icon} />{label}</a>
             ))}
           </nav>
           <div className="me">

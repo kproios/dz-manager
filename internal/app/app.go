@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/kproios/dz-manager/internal/alert"
+	"github.com/kproios/dz-manager/internal/automsg"
+	"github.com/kproios/dz-manager/internal/chat"
+	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/bans"
@@ -42,6 +45,9 @@ type App struct {
 	Bans     *bans.Service
 
 	MapEvents    *mapevents.Service
+	Intel        *intel.Service
+	Chat         *chat.Service
+	AutoMsg      *automsg.Service
 	BridgeExtras []func(context.Context) map[string]any
 
 	starters        []func(context.Context)

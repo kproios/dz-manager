@@ -49,7 +49,7 @@ export function CapList({ caps }: { caps: Cap[] }) {
           <tr key={c.name}>
             <td title={c.name}>{capLabels[c.name] || c.name}</td>
             <td><Badge state={c.state} /></td>
-            <td className="muted small"><span className="truncate cell-max" title={c.reason}>{c.reason}</span></td>
+            <td className="muted small cap-reason"><span className="truncate" title={c.reason}>{c.reason}</span></td>
           </tr>
         ))}
       </tbody>

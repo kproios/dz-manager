@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { api, Flags, MapState, Marker, PlayerProfile } from '../api'
+import { api, Flags, Intel, MapState, Marker, PlayerProfile } from '../api'
+import { Avatar, Flag, RiskBadges, RiskIcon } from '../intel'
 import { useApi } from '../hooks'
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, Pager, Seg, StatTile, steamUrl, Trunc, usePaged } from '../ui'
 import { ago, fmtDuration, fmtTime } from '../util'
@@ -17,6 +18,7 @@ export default function PlayerPage({ id }: { id: string }) {
   const flags = useApi<Flags>('/api/players/' + encodeURIComponent(id) + '/flags')
   const live = useApi<MapState>('/api/map/state', ['map'], 30000)
   const events = useApi<Marker[]>('/api/map/events', ['map_events'], 60000)
+  const intel = useApi<Intel>('/api/players/' + encodeURIComponent(id) + '/intel', ['intel'])
   const d = prof.data
   const stats = useMemo(() => {
     if (!d) return null
@@ -49,7 +51,7 @@ export default function PlayerPage({ id }: { id: string }) {
     <>
       <p className="small"><a href="#/players">← Players</a></p>
       <PageHead
-        title={<span className="row wrap">{p.name || '(unknown)'}
+        title={<span className="row wrap"><Avatar intel={intel.data ?? undefined} name={p.name} size={36} /><Flag intel={intel.data ?? undefined} />{p.name || '(unknown)'}<RiskIcon intel={intel.data ?? undefined} />
           {stats.online ? <Badge state="ok">online</Badge> : <Badge state="muted" title={fmtTime(p.last_seen)}>seen {ago(p.last_seen)}</Badge>}
           {flags.data?.local_ban && <Badge state="bad">banned</Badge>}
           {!!flags.data?.external.length && <Badge state="warn">external listing</Badge>}</span>}
@@ -72,6 +74,7 @@ export default function PlayerPage({ id }: { id: string }) {
             {d.names.length > 1 && <><dt>Also known as</dt><dd><Trunc text={d.names.map((n) => n.name).join(', ')} max={300} /></dd></>}
           </dl>
           {p.id_mismatch && <p className="hint warn">A source reported a BE GUID that does not match this Steam64. The computed value is shown.</p>}
+          <Checks steam64={p.steam64} intel={intel.data} reload={intel.reload} />
         </Card>
         <Card title="Quick actions" actions={livePlayer ? <Badge state="ok">on the map</Badge> : <Badge state="muted">not on the map</Badge>}>
           <PlayerActions target={{ steam64: p.steam64, name: p.name, be_guid: p.be_guid }} dests={eventDests(events.data)} players={others} />
@@ -87,6 +90,32 @@ export default function PlayerPage({ id }: { id: string }) {
       <Combat combat={d.combat} />
       <History audit={d.audit} />
     </>
+  )
+}
+
+function Checks({ steam64, intel, reload }: { steam64: string; intel: Intel | null; reload: () => void }) {
+  const notify = useNotify()
+  const [ip, setIp] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const reveal = async () => {
+    try { const r = await api.get<Intel>(`/api/players/${steam64}/intel?reveal_ip=1`); setIp(r.ip || 'not known') } catch (e: any) { notify(e.message, 'bad') }
+  }
+  const refresh = async () => {
+    setBusy(true)
+    try { await api.post(`/api/players/${steam64}/intel/refresh`); notify('Steam data refreshed'); reload() } catch (e: any) { notify(e.message, 'bad') } finally { setBusy(false) }
+  }
+  return (
+    <div className="qa-section">
+      <h4 className="row">Player checks <span className="grow" /><button className="small ghost" disabled={busy} onClick={refresh} title="Fetch the Steam profile and bans again now"><Icon name="refresh" />{busy ? 'Checking…' : 'Refresh'}</button></h4>
+      <dl>
+        <dt>Steam</dt><dd><RiskBadges intel={intel ?? undefined} />{intel?.steam_error && <span className="hint warn" style={{ display: 'block' }}>Last check failed: {intel.steam_error}</span>}
+          {intel?.steam_checked_at && <span className="faint small" style={{ display: 'block' }}>checked {ago(intel.steam_checked_at)}{intel.game_bans == null ? ' · add a Steam Web API key in Settings to also see game bans' : ''}</span>}</dd>
+        <dt>Location</dt><dd>{intel?.country ? <span className="row" style={{ gap: 6 }}><Flag intel={intel} />{intel.country}{intel.isp && <span className="muted small">· {intel.isp}</span>}</span> : <span className="muted">{intel?.ip_checked_at ? 'unknown' : 'not checked yet (needs the player online with RCON)'}</span>}</dd>
+        <dt>IP address</dt><dd>{ip ? <span className="id-line"><code>{ip}</code>{ip.includes('.') || ip.includes(':') ? <CopyButton value={ip} label="Copy IP" /> : null}</span>
+          : intel?.has_ip ? <button className="small ghost" onClick={reveal} title="Showing the IP is recorded in the audit log"><Icon name="eye" />Reveal</button> : <span className="muted">not seen yet</span>}</dd>
+      </dl>
+      <p className="hint">Steam bans can be for any game. BattlEye global bans are not public (BattlEye blocks those players itself) and DayZ does not use EasyAntiCheat.</p>
+    </div>
   )
 }
 
