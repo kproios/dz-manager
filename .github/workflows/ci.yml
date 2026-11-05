@@ -25,7 +25,7 @@ jobs:
           npm --prefix web run build
       - name: Go vet + tests (race)
         run: |
-          test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt needed"; exit 1; }
+          test -z "$(gofmt -l .)" || { gofmt -d .; echo "gofmt needed"; exit 1; }
           go vet ./...
           go test -race -count=1 ./...
       - name: govulncheck
