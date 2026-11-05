@@ -5,6 +5,7 @@ import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, P
 import { Icon } from '../icons'
 import { ago } from '../util'
 import { useNotify } from '../App'
+import { AutoMessages, PlayerChecks, VehicleIcons } from './SettingsExtra'
 
 const blank = { name: '', provider_kind: 'selfhosted_architect', game_host: '', game_port: 2302, query_host: '', query_port: 27016, rcon_host: '', rcon_port: 2305, rcon_password: '' }
 type Edit = typeof blank & { id?: string }
@@ -109,7 +110,10 @@ export default function Settings() {
           </dl>
         ) : <p className="muted">Download DZMBridge.zip from the latest GitHub release, install it as a server mod and paste the config from “Connect…”. The game-side PBO is not auto-updated: compare the installed version after each release.</p>}
       </Card>
+      <AutoMessages />
+      <PlayerChecks />
       <Tracking invalid={b?.info?.tracking_invalid || []} />
+      <VehicleIcons />
       <PriorityQueue />
       {edit && (
         <Confirm title={edit.id ? `Edit ${edit.name || 'server'}` : 'Add a server'} tone="primary" confirmLabel={edit.id ? 'Save changes' : 'Add server'} busy={saving} disabled={Object.keys(errs).length > 0} onClose={() => setEdit(null)} onConfirm={save} body={

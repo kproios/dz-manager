@@ -92,6 +92,18 @@ export interface Schedule {
   announce_minutes: number[]; announce_text: string; window_minutes: number; timeout_minutes: number; dry_run: boolean
   lock_minutes: number; kick_minutes: number; kick_message: string
 }
+export interface Intel {
+  steam64: string; avatar?: string; persona?: string; profile_private: boolean; limited: boolean
+  vac_banned: boolean; vac_bans?: number; game_bans?: number; days_since_ban?: number; community_banned: boolean; trade_ban?: string
+  steam_checked_at?: string; steam_error?: string; ip?: string; has_ip: boolean; country?: string; country_code?: string; isp?: string
+  proxy: boolean; hosting: boolean; ip_checked_at?: string
+}
+export interface ChatMessage { id: number; ts: string; channel: string; name: string; text: string }
+export interface AutoMsgConfig {
+  channel: 'rcon' | 'notify'
+  welcome: { enabled: boolean; text: string; delay_seconds: number }
+  rotation: { enabled: boolean; interval_minutes: number; messages: string[]; only_with_players: boolean }
+}
 export interface ManualRestart { at: string; requested: string; delay_minutes: number; by: string }
 export interface PerfPoint { minute: string; fps: number | null; fps_min: number | null; players: number | null; infected: number | null; animals: number | null; items: number | null; vehicles: number | null }
 export interface RestartEvent { id: number; down_at?: string; up_at?: string; planned_for?: string; kind: string; outcome: string; duration_seconds?: number }

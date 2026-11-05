@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import Dashboard from './Dashboard'
 import Players from './Players'
 import MapPage from './MapPage'
+import Live from './Live'
 
 vi.mock('../App', () => ({ useNotify: () => () => {} }))
 vi.mock('leaflet', () => ({ default: {} }))
@@ -27,8 +28,11 @@ describe('Dashboard empty RCON roster', () => {
     expect(html).toContain('RCON roster: 0')
   })
 
-  it('renders the Players empty state when the API returns a null roster', () => {
-    expect(renderToStaticMarkup(<Players />)).toContain('Nobody online.')
+  it('renders the Live empty roster and the player database empty state for null API slices', () => {
+    const live = renderToStaticMarkup(<Live />)
+    expect(live).toContain('Nobody online right now.')
+    for (const text of ['Players', 'Map', 'Live feed', 'Everyone']) expect(live).toContain(text)
+    expect(renderToStaticMarkup(<Players />)).toContain('No players recorded yet.')
   })
 
   it('renders empty map counts before any MetricZ payload has arrived', () => {

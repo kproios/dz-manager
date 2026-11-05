@@ -14,7 +14,7 @@ function emit(name: string, data: any) { listeners.forEach((l) => l(name, data))
 function ensureStream() {
   if (source || typeof EventSource === 'undefined') return
   source = new EventSource('/api/stream')
-  const names = ['server_status', 'capabilities', 'map', 'map_events', 'events', 'restarts', 'profiles']
+  const names = ['server_status', 'capabilities', 'map', 'map_events', 'events', 'restarts', 'profiles', 'intel', 'chat']
   for (const n of names) {
     source.addEventListener(n, (e) => {
       let data: any = null

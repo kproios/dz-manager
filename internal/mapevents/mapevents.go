@@ -284,14 +284,34 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	pattern := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(query) + "%"
 	// The live map (unpaged) lists every active marker before any history, so a
 	// long-running event can never be pushed out of the list by newer history.
-	order := "id DESC"
+	order, cursor := "id DESC", "id<?"
 	if !paged {
 		order = "(status='active') DESC, id DESC"
+	} else if r.URL.Query().Get("order") == "asc" {
+		order, cursor = "id ASC", "id>?"
 	}
+	// Optional category filter (comma list of known categories only).
+	cats := []string{}
+	for _, c := range strings.Split(r.URL.Query().Get("cat"), ",") {
+		for _, known := range Categories {
+			if c == known {
+				cats = append(cats, c)
+			}
+		}
+	}
+	catSQL := "1"
+	args := []any{p.ID, since, now, before, before, query, pattern}
+	if len(cats) > 0 {
+		catSQL = "category IN (?" + strings.Repeat(",?", len(cats)-1) + ")"
+		for _, c := range cats {
+			args = append(args, c)
+		}
+	}
+	args = append(args, limit+1)
 	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0) FROM map_events
 		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND expires_at >= ?))
-		AND (?=0 OR id<?) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\')
-		ORDER BY `+order+` LIMIT ?`, p.ID, since, now, before, before, query, pattern, limit+1)
+		AND (?=0 OR `+cursor+`) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\') AND `+catSQL+`
+		ORDER BY `+order+` LIMIT ?`, args...)
 	if err != nil {
 		httpx.Error(w, 500, err.Error())
 		return

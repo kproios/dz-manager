@@ -373,6 +373,30 @@ func (m *Monitor) command(ctx context.Context, addr, pw, serverID, cmd string) (
 	return out, nil
 }
 
+// Pump reads pushed server messages (chat) every two seconds between polls,
+// so the live chat stream does not lag by a whole poll interval.
+func (m *Monitor) Pump(ctx context.Context) {
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if !m.cmdMu.TryLock() {
+			continue // a command is running and drains messages itself
+		}
+		m.mu.Lock()
+		c, id := m.conn, m.status.ServerID
+		m.mu.Unlock()
+		if c != nil {
+			m.drain(c, id)
+		}
+		m.cmdMu.Unlock()
+	}
+}
+
 func (m *Monitor) drain(c Conn, serverID string) {
 	for {
 		select {

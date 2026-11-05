@@ -39,6 +39,14 @@ export function ago(iso?: string | null, now = Date.now()): string {
   return fmtDuration((now - t) / 1000) + ' ago'
 }
 
+/** "in 3h 20m" for a future instant, "2h 1m ago" for a past one. */
+export function relative(iso?: string | null, now = Date.now()): string {
+  if (!iso) return '—'
+  const t = new Date(iso).getTime()
+  if (isNaN(t)) return '—'
+  return t > now ? 'in ' + fmtDuration((t - now) / 1000) : fmtDuration((now - t) / 1000) + ' ago'
+}
+
 export function pct(v?: number | null): string {
   return v == null ? 'not reported' : `${Math.round(v * 100)}%`
 }

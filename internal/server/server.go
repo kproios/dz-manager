@@ -131,7 +131,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' "+originOf(s.Cfg.OIDCIssuer))
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https://*.steamstatic.com https://flagcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' "+originOf(s.Cfg.OIDCIssuer))
 		if s.Cfg.SecureCookies() {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
 		}

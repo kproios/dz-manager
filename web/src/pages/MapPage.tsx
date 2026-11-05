@@ -2,10 +2,10 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { MapState, Marker, MzPlayer, MzVehicle, PlayerProfile } from '../api'
 import { useApi } from '../hooks'
-import { Badge, Confirm, CopyButton, Meter, steamUrl } from '../ui'
+import { Badge, Confirm, CopyButton, Meter, Seg, steamUrl } from '../ui'
 import { Icon } from '../icons'
 import { ago, fromLatLng, grid, pct, toLatLng, TILE, WORLD } from '../util'
-import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, vehicleIcon } from '../mapIcons'
+import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
 import { usePref } from '../prefs'
 import { besides, eventDests, PlayerActions, Target, useRunAction } from '../playerActions'
 
@@ -27,7 +27,7 @@ const clampWorld = (v: number) => Math.max(1, Math.min(WORLD - 1, v))
 /** MetricZ reports some stats as 0..1 fractions and others as raw DayZ values. */
 const frac = (v: number | undefined, max: number) => v == null || !isFinite(v) ? null : Math.max(0, Math.min(1, v <= 1.0001 ? v : v / max))
 
-export default function MapPage() {
+export default function MapPage({ focusId }: { focusId?: string } = {}) {
   const state = useApi<MapState>('/api/map/state', ['map'], 15000)
   const events = useApi<Marker[]>('/api/map/events', ['map_events'], 30000)
   const el = useRef<HTMLDivElement>(null)
@@ -40,6 +40,7 @@ export default function MapPage() {
   const [storedLayers, setLayers] = usePref<Layers>('map.layers', defaultLayers)
   const show = { ...defaultLayers, ...storedLayers }
   const [hiddenList, setHiddenList] = usePref<MapIcon[]>('map.hidden', [])
+  const [vehicleRules, setVehicleRules] = usePref<VehicleRule[]>('map.vehicleRules', [])
   const hidden = useMemo(() => new Set(hiddenList), [hiddenList.join(',')])
   const [tilesOk, setTilesOk] = useState<boolean | null>(null)
   const [cursor, setCursor] = useState('')
@@ -83,6 +84,15 @@ export default function MapPage() {
 
   const data = state.data
   const players = data?.available ? data.players ?? [] : []
+  // Opened from the Live players list: select that player and centre the map once.
+  const focused = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const p = focusId ? players.find((x) => x.steam64 === focusId) : undefined
+    if (!p || !map.current || focused.current === focusId) return
+    focused.current = focusId
+    setSel({ kind: 'player', id: p.steam64 })
+    map.current.setView(toLatLng(p.x, p.z), 5)
+  }, [focusId, data])
   const selPlayer = sel?.kind === 'player' ? players.find((p) => p.steam64 === sel.id) : undefined
 
   // Players: markers are kept per Steam64 and moved, so dragging one is never interrupted by a refresh.
@@ -136,14 +146,14 @@ export default function MapPage() {
     g.clearLayers()
     if (!data?.available || !show.vehicles) return
     for (const v of data.vehicles ?? []) {
-      const kind = vehicleIcon(v)
+      const kind = vehicleIcon(v, vehicleRules)
       if (hidden.has(kind)) continue
       const mk = L.marker(toLatLng(v.x, v.z), { icon: entityIcon(kind, !data.fresh), title: v.class, alt: v.class, keyboard: true })
       mk.bindTooltip(tooltip(v.class), { direction: 'top' })
       mk.on('click', () => setSel({ kind: 'vehicle', v }))
       mk.addTo(g)
     }
-  }, [data, show.vehicles, hidden])
+  }, [data, show.vehicles, hidden, vehicleRules])
 
   const sites = useMemo(() => groupMarkers(events.data ?? []), [events.data])
   useEffect(() => {
@@ -212,8 +222,10 @@ export default function MapPage() {
         <span className="counts">{players.length} players · {data?.vehicles?.length ?? 0} vehicles · {activeEvents} active events</span>
         <div className="layers" role="group" aria-label="Map layers">
           {layerNames.map(([k, l]) => <button key={k} type="button" className="chip toggle" aria-pressed={show[k]} onClick={() => toggle(k)} title={`Show or hide ${l.toLowerCase()} (remembered for your account)`}>{l}</button>)}
-          <button type="button" className="chip toggle" aria-pressed={labels} onClick={() => setLabels(!labels)} title="Show names next to players, items and bases">Names</button>
         </div>
+        <span className="row small muted" title="Names next to players, items and bases: always visible, or only when you hover an icon">Labels
+          <Seg label="Labels" value={labels ? 'always' : 'hover'} onChange={(v) => setLabels(v === 'always')} options={[['always', 'Always'], ['hover', 'On hover']]} />
+        </span>
         <span className="muted small grow right nowrap">{cursor}</span>
       </div>
       {tilesOk === false && <div className="warnings">Map tiles are not installed in /var/lib/dzm/tiles/chernarusplus (see docs/install-game-side.md). Markers still work.</div>}
@@ -223,6 +235,8 @@ export default function MapPage() {
         <div ref={el} className="map" />
         {pick && <div className="pick-banner"><Icon name="target" />Click the map to teleport {pick.name}<button className="small" onClick={() => setPick(null)}>Cancel</button></div>}
         {sel && <Inspector sel={sel} player={selPlayer} targets={targets} dests={dests} onClose={() => setSel(null)} onPick={(t) => setPick(t)}
+          vehicleKind={sel.kind === 'vehicle' ? vehicleIcon(sel.v, vehicleRules) : undefined}
+          onVehicleKind={(cls, kind) => setVehicleRules([{ match: cls, kind }, ...vehicleRules.filter((r) => r.match.toLowerCase() !== cls.toLowerCase())].slice(0, 100))}
           onTpHere={(t, m) => { const b = besides(m); setPending({ target: t, ...b, label: `beside ${markerTitle(m)} (${grid(b.x, b.z)})` }) }} />}
       </div>
       <div className="legend small">
@@ -238,9 +252,10 @@ export default function MapPage() {
   )
 }
 
-function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere }: {
+function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, vehicleKind, onVehicleKind }: {
   sel: NonNullable<Sel>; player?: MzPlayer; targets: Target[]; dests: ReturnType<typeof eventDests>
   onClose: () => void; onPick: (t: Target) => void; onTpHere: (t: Target, m: Marker) => void
+  vehicleKind?: MapIcon; onVehicleKind: (cls: string, kind: MapIcon) => void
 }) {
   const id = sel.kind === 'player' ? sel.id : null
   const prof = useApi<PlayerProfile>(id ? '/api/players/' + encodeURIComponent(id) : null)
@@ -284,6 +299,11 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere }: {
             <dt>Fuel</dt><dd>{pct(sel.v.fuel)}</dd>
             <dt>Crew</dt><dd>{sel.v.crew ?? '—'}</dd>
             <dt>Engine</dt><dd>{sel.v.engine_on == null ? '—' : sel.v.engine_on ? 'Running' : 'Off'}</dd>
+            <dt>Show as</dt><dd>
+              <select value={vehicleKind} onChange={(e) => onVehicleKind(sel.v.class, e.target.value as MapIcon)} aria-label="Map icon for this vehicle class" title="Remembered for every vehicle of this class">
+                {vehicleKinds.map((k) => <option key={k} value={k}>{iconLabels[k]}</option>)}
+              </select>
+            </dd>
           </dl>
           <TpHere targets={targets} who={who} setWho={setWho} onGo={(t) => onTpHere(t, { ...sel.v, id: 0, key: '', category: 'custom', started_at: '', status: 'active', source: '', name: sel.v.class } as Marker)} />
         </>
