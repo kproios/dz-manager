@@ -16,6 +16,10 @@ const names: Record<string,string> = {
  'profile.create':'Server added', 'profile.update':'Server settings changed', 'profile.reveal_wizard':'Connection configs viewed',
  'profile.activate':'Active server changed', 'profile.archive':'Server archived', 'profile.rotate_ingest':'Ingest keys rotated',
  'priority.add':'Added to priority queue', 'priority.remove':'Removed from priority queue', 'priority.applied':'Priority queue marked applied',
+ 'restart.skip':'Next restart skipped', 'restart.unskip':'Restart skip undone', 'server.kill':'Server process killed',
+ 'settings.host_update':'Emergency stop host changed', 'settings.host_key':'Emergency stop key created', 'settings.discord_update':'Discord channel changed',
+ 'settings.bot_token':'Bot API token created', 'settings.bot_revoke':'Bot API token revoked', 'settings.bot_info':'Bot server info changed',
+ 'settings.retention_update':'Data retention changed', 'data.archive':'Old data archived',
  'raid.hit':'Base under attack', 'raid.destroyed':'Base part destroyed', 'raid.codelock':'Code lock raided',
  'banlist.sync':'External ban list synced from the server', 'settings.intel_update':'Player check settings changed', 'settings.messages_update':'Automatic messages changed',
  'event.start':'World event detected', 'event.end':'World event ended', 'item.spawn':'Item spawned',
@@ -24,7 +28,7 @@ const names: Record<string,string> = {
 export const readable = (s: string) => names[s] || s.replace(/[._]/g,' ').replace(/^./,c=>c.toUpperCase())
 /** Colour group for an action, shown as a small dot beside its name. */
 export function actionGroup(a: string): string {
- if (a.startsWith('restart.')) return 'restart'
+ if (a.startsWith('restart.') || a === 'server.kill') return 'restart'
  if (a.startsWith('player.') || a.startsWith('rcon.message') || a === 'rcon.kick') return 'player'
  if (a.startsWith('ban')) return 'ban'
  if (a.startsWith('rcon.') || a.startsWith('server.')) return 'server'

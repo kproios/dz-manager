@@ -23,7 +23,10 @@ import (
 )
 
 // Categories.
-var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag", "raid"}
+var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag", "raid", "death"}
+
+// deathTTL keeps a death on the live map; afterwards it stays in history.
+const deathTTL = 30 * time.Minute
 
 // raidTTL keeps a raid marker on the map after the last hit.
 const raidTTL = 30 * time.Minute
@@ -71,6 +74,54 @@ func (s *Service) Attach(b *bridge.Bridge) {
 	b.Subscribe(s.onItem, "item.spawn", "item.observed")
 	b.Subscribe(s.onServerStart, "server.start")
 	b.Subscribe(s.onRaid, "raid.hit", "raid.destroyed", "raid.codelock")
+	b.Subscribe(s.onDeath, "player.death")
+}
+
+type deathData struct {
+	Weapon    string   `json:"weapon"`
+	Cause     string   `json:"cause"`
+	Distance  float64  `json:"distance_m"`
+	KillerPos *posJSON `json:"killer_pos"`
+}
+
+type posJSON struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+func (s *Service) playerName(ctx context.Context, steam64 string) string {
+	var n string
+	_ = s.DB.QueryRowContext(ctx, `SELECT name FROM players WHERE steam64=?`, steam64).Scan(&n)
+	if n == "" {
+		return steam64
+	}
+	return n
+}
+
+// onDeath puts the victim (and killer, when a player killed them) on the map:
+// live for 30 minutes, then in the history timeline.
+func (s *Service) onDeath(ctx context.Context, ev bridge.Event) {
+	if ev.Pos == nil || ev.Actor == "" {
+		return
+	}
+	var d deathData
+	_ = json.Unmarshal(ev.Data, &d)
+	victim := s.playerName(ctx, ev.Actor)
+	label := victim + " died"
+	extra := map[string]any{"victim": ev.Actor, "victim_name": victim, "weapon": trunc(d.Weapon), "cause": trunc(d.Cause)}
+	if ev.Target != "" {
+		killer := s.playerName(ctx, ev.Target)
+		label = victim + " killed by " + killer
+		extra["killer"], extra["killer_name"], extra["distance_m"] = ev.Target, killer, d.Distance
+		if d.KillerPos != nil {
+			extra["killer_pos"] = d.KillerPos
+		}
+	}
+	extra["key"], extra["category"], extra["class"], extra["ttl_s"], extra["name"], extra["kind"] = "death:"+ev.ID, "death", "", int(deathTTL.Seconds()), label, "death"
+	data, _ := json.Marshal(extra)
+	ev.Data = data
+	s.onStart(ctx, ev)
 }
 
 type raidData struct {
@@ -272,6 +323,9 @@ type Marker struct {
 	Kind        string  `json:"kind,omitempty"`
 	Group       string  `json:"group,omitempty"`
 	Radius      float64 `json:"radius,omitempty"`
+	Container   string  `json:"container,omitempty"`
+	// Data carries the details of deaths and raids (victim, killer, positions).
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // Register adds API routes.
@@ -292,7 +346,12 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Sweep(r.Context())
-	since := s.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	// History window for the map timeline (default 2 h, up to 7 days).
+	hours := httpx.QueryInt(r, "history_hours", 2)
+	if hours < 1 || hours > 168 {
+		hours = 2
+	}
+	since := s.Now().UTC().Add(-time.Duration(hours) * time.Hour).Format(time.RFC3339)
 	now := s.Now().UTC().Format(time.RFC3339)
 	paged := r.URL.Query().Get("paged") == "true"
 	limit, before, query := 1000, 0, ""
@@ -326,7 +385,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	catSQL := "1"
-	args := []any{p.ID, since, now, before, before, query, pattern}
+	args := []any{p.ID, since, now, since, before, before, query, pattern}
 	if len(cats) > 0 {
 		catSQL = "category IN (?" + strings.Repeat(",?", len(cats)-1) + ")"
 		for _, c := range cats {
@@ -334,8 +393,8 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	args = append(args, limit+1)
-	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0) FROM map_events
-		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND expires_at >= ?))
+	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0),COALESCE(json_extract(data,'$.container'),''),CASE WHEN category IN ('death','raid') THEN data ELSE '' END FROM map_events
+		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND (expires_at >= ? OR started_at >= ?)))
 		AND (?=0 OR `+cursor+`) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\') AND `+catSQL+`
 		ORDER BY `+order+` LIMIT ?`, args...)
 	if err != nil {
@@ -347,12 +406,16 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m Marker
 		var ended sql.NullString
-		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation, &m.Name, &m.Kind, &m.Group, &m.Radius); err != nil {
+		var data string
+		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation, &m.Name, &m.Kind, &m.Group, &m.Radius, &m.Container, &data); err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
 		}
 		if ended.Valid {
 			m.EndedAt = &ended.String
+		}
+		if data != "" && json.Valid([]byte(data)) {
+			m.Data = json.RawMessage(data)
 		}
 		out = append(out, m)
 	}

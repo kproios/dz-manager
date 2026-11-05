@@ -16,6 +16,9 @@ import (
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/chat"
 	"github.com/kproios/dz-manager/internal/config"
+	"github.com/kproios/dz-manager/internal/discord"
+	"github.com/kproios/dz-manager/internal/hooks"
+	"github.com/kproios/dz-manager/internal/hostctl"
 	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
@@ -23,6 +26,7 @@ import (
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/restarts"
+	"github.com/kproios/dz-manager/internal/retention"
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/server"
 	"github.com/kproios/dz-manager/internal/store"
@@ -48,6 +52,10 @@ type App struct {
 	Intel        *intel.Service
 	Chat         *chat.Service
 	AutoMsg      *automsg.Service
+	Hooks        *hooks.Bus
+	Discord      *discord.Service
+	HostCtl      *hostctl.Service
+	Retention    *retention.Service
 	BridgeExtras []func(context.Context) map[string]any
 
 	starters        []func(context.Context)

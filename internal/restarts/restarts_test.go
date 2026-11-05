@@ -204,6 +204,42 @@ func TestCountdownRestartAndCancel(t *testing.T) {
 	}
 }
 
+func TestSkipNextRestart(t *testing.T) {
+	e, svc, c, sent, id := setup(t)
+	ctx := context.Background()
+	sc := sched("12:00", "16:00")
+	sc.ServerID, sc.Mode, sc.DryRun, sc.Announce = id, restarts.ModeDrive, false, true
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	e.JSON("POST", "/api/restarts/drive-verification", map[string]any{"verified": true, "evidence": "test"}, nil)
+	svc.Observe(ctx, id, true)
+	if code := e.JSON("POST", "/api/restarts/skip", map[string]bool{"skip": true}, nil); code != 200 {
+		t.Fatalf("skip: %d", code)
+	}
+	for at := time.Date(2026, 11, 4, 11, 40, 0, 0, athens); at.Before(time.Date(2026, 11, 4, 12, 6, 0, 0, athens)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Tick(ctx)
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("skipped restart still sent: %v", *sent)
+	}
+	if evs, _ := svc.Events(ctx, id, 10); len(evs) != 0 {
+		t.Fatalf("skipped restart reported: %+v", evs)
+	}
+	if _, ok := svc.SkippedAt(ctx, id); ok {
+		t.Fatal("skip not cleared after it passed")
+	}
+	// The 16:00 restart runs normally.
+	for at := time.Date(2026, 11, 4, 15, 59, 0, 0, athens); at.Before(time.Date(2026, 11, 4, 16, 0, 20, 0, athens)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Tick(ctx)
+	}
+	if got := strings.Join(*sent, "|"); !strings.HasSuffix(got, "#shutdown") {
+		t.Fatalf("16:00 restart: %s", got)
+	}
+}
+
 type clock struct {
 	mu sync.Mutex
 	t  time.Time

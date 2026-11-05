@@ -23,6 +23,7 @@ import (
 
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
+	"github.com/kproios/dz-manager/internal/hooks"
 	"github.com/kproios/dz-manager/internal/httpx"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/store"
@@ -56,6 +57,27 @@ type Service struct {
 	RCON    RCON
 	Roster  Roster
 	Now     func() time.Time
+	// Hooks receives public ban/unban events (Discord, bot API); optional.
+	Hooks *hooks.Bus
+}
+
+func (s *Service) publishBan(kind string, b *Ban) {
+	if s.Hooks == nil || b == nil {
+		return
+	}
+	who := b.Name
+	if who == "" {
+		who = "A player"
+	}
+	if kind == hooks.Unban {
+		s.Hooks.Publish(hooks.Event{Kind: kind, Title: who + " was unbanned"})
+		return
+	}
+	until := "permanent"
+	if b.ExpiresAt != nil {
+		until = "until " + *b.ExpiresAt
+	}
+	s.Hooks.Publish(hooks.Event{Kind: kind, Title: who + " was banned", Fields: []hooks.Field{{Name: "Reason", Value: b.Reason}, {Name: "Duration", Value: until}}})
 }
 
 // Ban row.
@@ -196,6 +218,8 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 	code := 201
 	if applied != "ok" {
 		code = 502
+	} else {
+		s.publishBan(hooks.Ban, b)
 	}
 	httpx.JSON(w, code, b)
 }
@@ -233,6 +257,7 @@ func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.DB.ExecContext(ctx, `UPDATE bans SET revoked_at=?, revoked_by=? WHERE id=?`, s.now().UTC().Format(time.RFC3339), a.Name, id)
 	_ = s.Audit.Write(ctx, a, "ban.revoke", targetOf(b), map[string]any{"ban_id": id}, "ok", detail)
 	b, _ = s.get(ctx, id)
+	s.publishBan(hooks.Unban, b)
 	httpx.JSON(w, 200, b)
 }
 

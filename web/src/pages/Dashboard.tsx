@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react'
-import { api, Cap, MapState, PerfPoint, ServerStatus } from '../api'
+import { useMemo } from 'react'
+import { Cap, MapState, PerfPoint, ServerStatus } from '../api'
 import { useApi, useNow } from '../hooks'
-import { Badge, Card, CapList, Confirm, ErrorBox, Meter, PageHead, Seg, StatTile } from '../ui'
+import { Badge, Card, CapList, ErrorBox, Meter, PageHead, Seg, StatTile } from '../ui'
 import { ago, fmtDuration, fmtTime } from '../util'
-import { useNotify } from '../App'
 import { LineChart, Pt, Sparkline } from '../charts'
 import { usePref } from '../prefs'
 import { ServerControls } from './Restarts'
@@ -94,7 +93,6 @@ export default function Dashboard() {
       </div>
 
       <div className="grid">
-        <Broadcast disabled={s?.rcon.state !== 'ok'} />
         <Card title="Capabilities">{caps.data && <CapList caps={caps.data.capabilities} />}</Card>
         <Card title="DZ Manager">
           {st && (
@@ -109,44 +107,5 @@ export default function Dashboard() {
         </Card>
       </div>
     </>
-  )
-}
-
-const PRESETS = ['Server restart soon — find a safe spot.', 'Admins are online. Report issues on Discord.', 'Please respect the server rules. Have fun!']
-
-function Broadcast({ disabled }: { disabled: boolean }) {
-  const [msg, setMsg] = useState('')
-  const [confirm, setConfirm] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const notify = useNotify()
-  const send = async () => {
-    setBusy(true)
-    try {
-      await api.post<{ ok: boolean; reply: string }>('/api/rcon/say', { message: msg })
-      notify('Broadcast sent')
-      setMsg('')
-    } catch (e: any) {
-      notify(e.message, 'bad')
-    } finally {
-      setBusy(false)
-      setConfirm(false)
-    }
-  }
-  return (
-    <Card title={<><Icon name="megaphone" />Broadcast</>}>
-      <div className="stack">
-        <select value="" onChange={(e) => e.target.value && setMsg(e.target.value)} disabled={disabled} aria-label="Preset messages">
-          <option value="">Quick messages…</option>
-          {PRESETS.map((p) => <option key={p}>{p}</option>)}
-        </select>
-        <textarea maxLength={200} rows={2} value={msg} placeholder="Message to all players" onChange={(e) => setMsg(e.target.value)} disabled={disabled} />
-      </div>
-      <div className="row end">
-        <span className="muted small">{msg.length}/200</span>
-        <button className="primary small" disabled={disabled || !msg.trim()} onClick={() => setConfirm(true)}>Send to all</button>
-      </div>
-      {disabled && <p className="hint">Requires a working RCON connection.</p>}
-      {confirm && <Confirm title="Broadcast to all players?" tone="primary" confirmLabel="Send" body={<blockquote>{msg}</blockquote>} busy={busy} onConfirm={send} onClose={() => setConfirm(false)} />}
-    </Card>
   )
 }

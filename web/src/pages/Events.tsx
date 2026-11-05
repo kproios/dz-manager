@@ -7,12 +7,12 @@ import { iconLabels, iconSvg, MapIcon, markerIcon, markerTitle } from '../mapIco
 import { usePref } from '../prefs'
 import { Icon, IconName } from '../icons'
 
-interface Event { id: number; ts: string; type: string; actor: string; actor_name: string; known: boolean; data: Record<string, unknown> }
+interface Event { id: number; ts: string; type: string; actor: string; actor_name: string; known: boolean; data: Record<string, unknown>; subject?: { category: string; class: string; name: string; x: number; z: number } }
 
 // World-event categories as the map draws them.
 const CATS: [string, MapIcon, string][] = [
   ['heli_crash', 'heli', 'Helicrash'], ['plane_crash', 'plane', 'Aircraft crash'], ['military_convoy', 'convoy', 'Convoy'], ['police', 'police', 'Police'],
-  ['train', 'train', 'Train'], ['airdrop', 'airdrop', 'Airdrop'], ['loot_box', 'item', 'Loot box'], ['base_flag', 'flag', 'Base flag'], ['raid', 'raid', 'Raid'],
+  ['train', 'train', 'Train'], ['airdrop', 'airdrop', 'Airdrop'], ['loot_box', 'item', 'Loot box'], ['base_flag', 'flag', 'Base flag'], ['raid', 'raid', 'Raid'], ['death', 'death', 'Death'],
   ['tracked_item', 'item', 'Tracked item'], ['rare_item', 'item', 'Item spawn'], ['custom', 'item', 'Other'],
 ]
 // Activity types with an icon each.
@@ -69,7 +69,7 @@ export default function Events() {
           <td className="nowrap" title={fmtTime(e.ts)}>{ago(e.ts)}</td>
           <td><ActionName action={e.type} /> {!e.known && <Badge state="warn" title="DZ Manager stored this event but has no handler for it">not handled</Badge>}</td>
           <td>{e.actor ? <a href={'#/players/' + e.actor} title={e.actor}>{e.actor_name || e.actor}</a> : <span className="muted">—</span>}</td>
-          <td><LogDetails params={e.data} /></td>
+          <td>{e.subject ? <span className="row" style={{ gap: 6 }}><span className={`entity-pin icon-${markerIcon({ category: e.subject.category })}`} style={{ width: 16, height: 16, display: 'inline-block' }} dangerouslySetInnerHTML={{ __html: iconSvg(markerIcon({ category: e.subject.category })) }} />{CATS.find((c) => c[0] === e.subject!.category)?.[2] || readable(e.subject.category)} · <span className="muted">{e.subject.name || e.subject.class}</span> · <a href="#/map">{grid(e.subject.x, e.subject.z)}</a></span> : <LogDetails params={e.data} />}</td>
         </tr>)}</tbody>
       </table></div>}
       <LogPager page={q.cursors.length} next={raw.data?.next_before} loading={raw.loading} onNewer={q.newer} onOlder={q.older} onLatest={q.reset} />

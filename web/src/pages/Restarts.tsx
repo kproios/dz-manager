@@ -7,7 +7,22 @@ import { fmtDuration, fmtTime } from '../util'
 import { useNotify } from '../App'
 import { Bars } from '../charts'
 
-interface Resp { schedule: Schedule; events: RestartEvent[]; next?: string; now: string; online?: boolean; provider_schedule: Cap; restart_drive: Cap; manual?: ManualRestart; manual_delays?: number[] }
+interface Resp { schedule: Schedule; events: RestartEvent[]; next?: string; now: string; online?: boolean; provider_schedule: Cap; restart_drive: Cap; manual?: ManualRestart; manual_delays?: number[]; skipped?: string }
+
+function SkipButton({ skipped, provider, reload }: { skipped: boolean; provider: boolean; reload: () => void }) {
+  const notify = useNotify()
+  const [open, setOpen] = useState(false)
+  const toggle = async () => {
+    try { await api.post('/api/restarts/skip', { skip: !skipped }); notify(skipped ? 'Next restart restored' : 'Next restart skipped'); reload() } catch (e: any) { notify(e.message, 'bad') } finally { setOpen(false) }
+  }
+  return <>
+    <button className="small" onClick={() => skipped ? toggle() : setOpen(true)} title={skipped ? 'Run the next restart after all' : 'Skip only the next planned restart'}><Icon name={skipped ? 'restarts' : 'clock'} />{skipped ? 'Undo skip' : 'Skip next restart'}</button>
+    {open && <Confirm title="Skip the next restart?" tone="primary" confirmLabel="Skip it" onClose={() => setOpen(false)} onConfirm={toggle} body={<>
+      <p>No warnings, lock, kick or shutdown for the next planned restart. The one after runs normally, and you can undo this until then.</p>
+      {provider && <p className="warn small">Your provider's own schedule still restarts the server: in provider mode this only stops DZ Manager's warnings, lock and kick.</p>}
+    </>} />}
+  </>
+}
 
 const INTERVALS: [number, string][] = [[2, 'Every 2 h'], [3, 'Every 3 h'], [4, 'Every 4 h'], [6, 'Every 6 h'], [8, 'Every 8 h'], [12, 'Every 12 h'], [24, 'Once a day'], [0, 'Custom times']]
 const ANNOUNCE_CHOICES = [30, 20, 15, 10, 5, 3, 2, 1]
@@ -75,9 +90,10 @@ export default function Restarts() {
       <PageHead title="Restarts" sub={r.data.online == null ? 'Server status unknown' : r.data.online ? 'Server online' : 'Server down'} actions={<ServerControls resp={r.data} reload={r.reload} />} />
       {manual && <CountdownBanner m={manual} now={now} reload={r.reload} />}
       <div className="grid two">
-        <Card title="Next planned restart">
+        <Card title="Next planned restart" actions={next ? <SkipButton skipped={!!r.data.skipped && new Date(r.data.skipped).getTime() === next} provider={sc.mode !== 'drive'} reload={r.reload} /> : undefined}>
           {next ? <>
-            <div className="big">{fmtDuration((next - now) / 1000)}</div>
+            <div className={'big' + (r.data.skipped && new Date(r.data.skipped).getTime() === next ? ' struck' : '')}>{fmtDuration((next - now) / 1000)}</div>
+            {r.data.skipped && new Date(r.data.skipped).getTime() === next && <Badge state="warn">skipped: no warnings, lock, kick or restart</Badge>}
             <div className="muted">{new Date(next).toLocaleString(undefined, { weekday: 'long', hour: '2-digit', minute: '2-digit' })} · {sc.timezone}</div>
           </> : <p className="muted">No schedule enabled.</p>}
           <Timeline sc={sc} />
@@ -256,7 +272,8 @@ export function ServerControls({ resp, reload }: { resp?: Resp | null; reload?: 
   const r = useApi<Resp>(resp ? null : '/api/restarts', ['restarts', 'capabilities'])
   const data = resp ?? r.data
   const notify = useNotify()
-  const [open, setOpen] = useState<'restart' | 'kick' | 'lock' | 'unlock' | null>(null)
+  const [open, setOpen] = useState<'restart' | 'kick' | 'lock' | 'unlock' | 'kill' | null>(null)
+  const host = useApi<{ ready: boolean; host: string }>('/api/settings/host')
   const [busy, setBusy] = useState(false)
   const [delay, setDelay] = useState(5)
   const [kickMsg, setKickMsg] = useState(KICK_MESSAGES[0])
@@ -280,7 +297,14 @@ export function ServerControls({ resp, reload }: { resp?: Resp | null; reload?: 
         {locked == null && <button className="small ghost" disabled={!rconOk} onClick={() => setOpen('unlock')} title="Allow players to join"><Icon name="unlock" />Unlock</button>}
         <button className="small danger" disabled={!rconOk} title={rconOk ? 'Kick every player' : 'Requires RCON'} onClick={() => setOpen('kick')}><Icon name="kick" />Kick all</button>
         <button className="small danger" disabled={!canRestart} title={restartWhy || 'Restart the game server'} onClick={() => setOpen('restart')}><Icon name="power" />Restart…</button>
+        <button className="small danger" disabled={!host.data?.ready} title={host.data?.ready ? 'Force-stop a frozen server process (the provider starts it again)' : 'Set up the emergency stop in Settings → Server first'} onClick={() => setOpen('kill')}><Icon name="skull" />Kill…</button>
       </span>
+      {open === 'kill' && <Confirm title="Kill the game server process?" word="KILL" confirmLabel="Kill process" busy={busy} onClose={() => setOpen(null)}
+        onConfirm={() => act(() => api.post('/api/server/kill', { confirm: 'KILL' }), 'Server process killed; the provider starts it again')}
+        body={<div className="small">
+          <p>Use this only when the server is frozen and does not react to Restart. The process is stopped at once (like a crash): <b>progress since the last autosave can be lost</b> and players are disconnected.</p>
+          <p className="muted">Runs on {host.data?.host} through the restricted SSH key; Architect (or your provider) starts the server again.</p>
+        </div>} />}
       {(open === 'lock' || open === 'unlock') && <Confirm title={open === 'lock' ? 'Lock the server?' : 'Unlock the server?'} tone="primary" confirmLabel={open === 'lock' ? 'Lock' : 'Unlock'} busy={busy} onClose={() => setOpen(null)}
         onConfirm={() => act(() => api.post('/api/rcon/' + open), open === 'lock' ? 'Server locked: no new joins' : 'Server unlocked')}
         body={<p>{open === 'lock' ? 'Players already online stay connected; nobody new can join until you unlock or the server restarts.' : 'Players can join again.'}</p>} />}

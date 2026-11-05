@@ -5,7 +5,9 @@ import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, P
 import { Icon } from '../icons'
 import { ago } from '../util'
 import { useNotify } from '../App'
-import { AutoMessages, PlayerChecks, VehicleIcons } from './SettingsExtra'
+import { AutoMessages, BotApi, DiscordChannels, HostControl, PlayerChecks, Retention, VehicleIcons } from './SettingsExtra'
+import { usePref } from '../prefs'
+import { IconName } from '../icons'
 
 const blank = { name: '', provider_kind: 'selfhosted_architect', game_host: '', game_port: 2302, query_host: '', query_port: 27016, rcon_host: '', rcon_port: 2305, rcon_password: '' }
 type Edit = typeof blank & { id?: string }
@@ -25,6 +27,20 @@ function problems(e: Edit): Partial<Record<keyof Edit, string>> {
   for (const k of ['query_host', 'rcon_host'] as const) if (e[k].trim() && !reHost.test(e[k].trim())) out[k] = 'Use an IP address or hostname'
   for (const k of ['game_port', 'query_port', 'rcon_port'] as const) if (!Number.isInteger(e[k]) || e[k] < 1 || e[k] > 65535) out[k] = '1–65535'
   return out
+}
+
+type SettingsTab = 'server' | 'players' | 'map' | 'messages' | 'integrations' | 'data'
+const TABS: [SettingsTab, string, IconName, string][] = [
+  ['server', 'Server', 'power', 'Game servers, bridge, emergency stop'],
+  ['players', 'Players', 'players', 'Player checks and priority queue'],
+  ['map', 'Map & tracking', 'map', 'Tracked events, items and vehicle icons'],
+  ['messages', 'Messages', 'megaphone', 'Welcome and rotating messages'],
+  ['integrations', 'Integrations', 'send', 'Discord channels and bot API'],
+  ['data', 'Data', 'audit', 'Retention and archives'],
+]
+
+function Tabs({ value, onChange }: { value: SettingsTab; onChange: (t: SettingsTab) => void }) {
+  return <div className="tabs full" role="tablist" aria-label="Settings sections">{TABS.map(([k, l, i, d]) => <button key={k} role="tab" aria-selected={value === k} title={d} onClick={() => onChange(k)}><Icon name={i} />{l}</button>)}</div>
 }
 
 export default function Settings() {
@@ -66,10 +82,13 @@ export default function Settings() {
     </label>
   )
   const b = bridge.data
+  const [tab, setTab] = usePref<SettingsTab>('settings.tab', 'server')
 
   return (
     <>
       <PageHead title="Settings" />
+      <Tabs value={tab} onChange={setTab} />
+      {tab === 'server' && <>
       <Card title="Game servers" actions={<button className="small primary" onClick={() => setEdit({ ...blank })}><Icon name="plus" />Add server</button>}>
         <ErrorBox error={profiles.error} />
         {!profiles.data?.length ? <Empty>No servers yet. Add your server to start.</Empty> : (
@@ -110,11 +129,13 @@ export default function Settings() {
           </dl>
         ) : <p className="muted">Download DZMBridge.zip from the latest GitHub release, install it as a server mod and paste the config from “Connect…”. The game-side PBO is not auto-updated: compare the installed version after each release.</p>}
       </Card>
-      <AutoMessages />
-      <PlayerChecks />
-      <Tracking invalid={b?.info?.tracking_invalid || []} />
-      <VehicleIcons />
-      <PriorityQueue />
+      <HostControl />
+      </>}
+      {tab === 'players' && <><PlayerChecks /><PriorityQueue /></>}
+      {tab === 'map' && <><Tracking invalid={b?.info?.tracking_invalid || []} /><VehicleIcons /></>}
+      {tab === 'messages' && <AutoMessages />}
+      {tab === 'integrations' && <><DiscordChannels /><BotApi /></>}
+      {tab === 'data' && <Retention />}
       {edit && (
         <Confirm title={edit.id ? `Edit ${edit.name || 'server'}` : 'Add a server'} tone="primary" confirmLabel={edit.id ? 'Save changes' : 'Add server'} busy={saving} disabled={Object.keys(errs).length > 0} onClose={() => setEdit(null)} onConfirm={save} body={
           <div className="form">
