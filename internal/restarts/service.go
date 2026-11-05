@@ -16,6 +16,7 @@ import (
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/caps"
+	"github.com/kproios/dz-manager/internal/hooks"
 	"github.com/kproios/dz-manager/internal/httpx"
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/store"
@@ -51,6 +52,8 @@ type Service struct {
 	KickAll func(ctx context.Context, reason string) (int, error)
 	// OnLock records a lock state change applied by the scheduler (optional).
 	OnLock func(locked bool)
+	// Hooks receives public restart events (Discord, bot API); optional.
+	Hooks *hooks.Bus
 
 	mu        sync.Mutex
 	online    map[string]bool
@@ -160,6 +163,9 @@ func (s *Service) Observe(ctx context.Context, serverID string, online bool) {
 		}
 		if kind == "unplanned" {
 			s.Alert.Send("server went down outside the restart schedule (crash or manual stop?)")
+			s.hook(hooks.Server, "Server went down unexpectedly", "It should be back in a few minutes.")
+		} else {
+			s.hook(hooks.Restart, "Server is restarting", "Back in a few minutes.")
 		}
 		s.publish()
 	}
@@ -180,6 +186,12 @@ func (s *Service) Observe(ctx context.Context, serverID string, online bool) {
 		}
 		// A freshly started DayZ server accepts joins again.
 		s.setLocked(false)
+	}
+}
+
+func (s *Service) hook(kind, title, text string) {
+	if s.Hooks != nil {
+		s.Hooks.Publish(hooks.Event{Kind: kind, Title: title, Text: text})
 	}
 }
 
@@ -219,7 +231,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.refreshCaps(ctx, sc)
 	now := s.Now()
 	if sc.Enabled {
-		if next, ok := sc.Next(now.Add(-30 * time.Second)); ok {
+		if next, ok := sc.Next(now.Add(-30 * time.Second)); ok && !s.skipped(ctx, sc.ServerID, next) {
 			s.announce(ctx, sc, next, now)
 			s.prepare(ctx, sc, next, now, time.Time{})
 			s.drive(ctx, sc, next, now)
@@ -339,6 +351,7 @@ func (s *Service) announce(ctx context.Context, sc Schedule, next, now time.Time
 		}
 		msg := sc.Announcement(m, next)
 		err := s.Exec(ctx, "say -1 "+msg)
+		s.hook(hooks.Restart, fmt.Sprintf("Server restart in %d minute(s)", m), "Planned for "+localClock(sc, next)+".")
 		res, detail := "ok", ""
 		if err != nil {
 			res, detail = "error", err.Error()
@@ -388,6 +401,10 @@ func (s *Service) detectMissed(ctx context.Context, sc Schedule, now time.Time) 
 	// Planned instants whose detection window closed within the last ~2 ticks.
 	for _, o := range sc.Occurrences(now.Add(-w-30*time.Second), now.Add(-w)) {
 		if !s.once(fmt.Sprintf("missed:%s:%d", sc.ServerID, o.Unix())) {
+			continue
+		}
+		if s.skipped(ctx, sc.ServerID, o) {
+			s.clearSkip(ctx, sc.ServerID) // the skipped restart has passed
 			continue
 		}
 		var n int
@@ -460,6 +477,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/restarts/drive-verification", s.apiDriveVerify)
 	mux.HandleFunc("POST /api/restarts/now", s.apiNow)
 	mux.HandleFunc("POST /api/restarts/cancel", s.apiCancel)
+	mux.HandleFunc("POST /api/restarts/skip", s.apiSkip)
 }
 
 func actor(r *http.Request) audit.Actor {
@@ -488,6 +506,9 @@ func (s *Service) apiGet(w http.ResponseWriter, r *http.Request) {
 	}
 	if m, ok := s.PendingManual(r.Context(), p.ID); ok {
 		out["manual"] = m
+	}
+	if t, ok := s.SkippedAt(r.Context(), p.ID); ok {
+		out["skipped"] = t
 	}
 	out["manual_delays"] = ManualDelays
 	s.mu.Lock()

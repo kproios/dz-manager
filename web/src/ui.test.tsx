@@ -44,6 +44,11 @@ describe('vehicle icon rules', () => {
     expect(vehicleIcon({ class: 'Boat_01_Orange', type: 'Boat' })).toBe('boat')
     expect(vehicleIcon({ class: 'MountainBike', type: '' })).toBe('bike')
     expect(vehicleIcon({ class: 'CivilianSedan', type: 'Car' }, [{ match: 'sedan', kind: 'police' }])).toBe('police')
+    // Trucks get their own icon; the convoy icon is reserved for convoy world events.
+    expect(vehicleIcon({ class: 'Truck_01_Covered', type: 'Car' })).toBe('truck')
+    const { markerIcon } = await import('./mapIcons')
+    expect(markerIcon({ category: 'military_convoy' })).toBe('convoy')
+    expect(markerIcon({ category: 'death' })).toBe('death')
   })
 })
 

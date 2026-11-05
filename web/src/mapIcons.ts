@@ -1,6 +1,6 @@
 import type { Marker, MzVehicle } from './api'
 
-export type MapIcon = 'heli'|'plane'|'convoy'|'police'|'car'|'bike'|'boat'|'item'|'weapon'|'flag'|'airdrop'|'train'|'raid'
+export type MapIcon = 'heli'|'plane'|'convoy'|'police'|'car'|'truck'|'bike'|'boat'|'item'|'weapon'|'flag'|'airdrop'|'train'|'raid'|'death'
 // Original, fixed SVG paths. Server-provided names are never interpolated into HTML.
 const paths:Record<MapIcon,string>={
  heli:'<path d="M3 3h16M11 3v4M5 9h10l4 5v3H8l-3-4H2V9h3ZM11 9v5h7M8 17v3m8-3v3M6 20h13M20 6v7m-2-5 4 3"/>',
@@ -16,11 +16,13 @@ const paths:Record<MapIcon,string>={
  airdrop:'<path d="M2 10a10 10 0 0 1 20 0H2Zm0 0 7 7m13-7-7 7M8 10l2 7m6-7-2 7M8 17h8v6H8Z"/>',
  train:'<path d="M5 3h14v14H5ZM5 10h14M9 3v7m6-7v7M7 17l-3 6m13-6 3 6M5 21h14"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>',
  raid:'<path d="m12 2 2 5 5-3-2 6 5 1-5 3 3 5-6-2-2 5-2-5-6 2 3-5-5-3 5-1-2-6 5 3 2-5Z"/>',
+ truck:'<path d="M2 7h11v10H2ZM13 11h5l3 3v3h-8"/><circle cx="6" cy="18" r="2"/><circle cx="17" cy="18" r="2"/><path d="M5 10h5"/>',
+ death:'<path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.1 4.1 2.5 5.1V19h9v-3.9c1.4-1 2.5-2.7 2.5-5.1a7 7 0 0 0-7-7Z"/><circle cx="9.3" cy="10.5" r="1.3"/><circle cx="14.7" cy="10.5" r="1.3"/><path d="M10.5 19v2m3-2v2"/>',
 }
-export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train',raid:'Raid'}
+export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',truck:'Truck',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train',raid:'Raid',death:'Death'}
 export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
 export interface VehicleRule { match:string; kind:MapIcon }
-export const vehicleKinds:MapIcon[]=['car','bike','boat','heli','convoy','plane','police','train']
+export const vehicleKinds:MapIcon[]=['car','truck','bike','boat','heli','plane','police','train']
 /** Owner rules (classname contains `match`, case-insensitive) win over the built-in guesses. */
 export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>,rules:VehicleRule[]=[]):MapIcon {
  const cls=(v.class||'').toLowerCase()
@@ -29,11 +31,11 @@ export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>,rules:VehicleRule[]
  if(/motorbike|motorcycle|bicycle|bike|moped|scooter|quad|atv|dirtbike/.test(type))return 'bike'
  if(/boat|zodiac|jetski|rhib|kayak|raft|ship|watercraft/.test(type))return 'boat'
  if(/helicopter|heli/.test(type))return 'heli'
- if(/truck|v3s|ural/.test(type))return 'convoy'
+ if(/truck|v3s|ural|bus/.test(type))return 'truck'
  return 'car'
 }
 export function markerIcon(m:Pick<Marker,'category'|'kind'>):MapIcon {
- const category:Record<string,MapIcon>={heli_crash:'heli',plane_crash:'plane',military_convoy:'convoy',police:'police',train:'train',airdrop:'airdrop',loot_box:'item',base_flag:'flag',raid:'raid'}
+ const category:Record<string,MapIcon>={heli_crash:'heli',plane_crash:'plane',military_convoy:'convoy',police:'police',train:'train',airdrop:'airdrop',loot_box:'item',base_flag:'flag',raid:'raid',death:'death'}
  return category[m.category] || (m.kind==='weapon'?'weapon':'item')
 }
 export function markerTitle(m:Pick<Marker,'name'|'class'|'category'>):string {return m.name?.trim() || m.class || m.category.replaceAll('_',' ')}

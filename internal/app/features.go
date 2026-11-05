@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/kproios/dz-manager/internal/actions"
 	"github.com/kproios/dz-manager/internal/alert"
@@ -9,13 +10,19 @@ import (
 	"github.com/kproios/dz-manager/internal/bans"
 	"github.com/kproios/dz-manager/internal/bridge"
 	"github.com/kproios/dz-manager/internal/chat"
+	"github.com/kproios/dz-manager/internal/discord"
+	"github.com/kproios/dz-manager/internal/feeds"
+	"github.com/kproios/dz-manager/internal/hooks"
+	"github.com/kproios/dz-manager/internal/hostctl"
 	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/mapevents"
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/priority"
+	"github.com/kproios/dz-manager/internal/publicapi"
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/restarts"
+	"github.com/kproios/dz-manager/internal/retention"
 )
 
 // registerFeatures wires feature modules (RCON, MetricZ, restarts, bridge…).
@@ -110,8 +117,69 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.AutoMsg.Register(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "auto-messages", a.AutoMsg.Run) })
 
+	// Public hooks: one bus for kills, joins, raids, world events, bans and
+	// restarts; Discord webhooks and the bot API read from it.
+	a.Hooks = &hooks.Bus{}
+	a.Bans.Hooks = a.Hooks
+	a.Restarts.Hooks = a.Hooks
+	(&feeds.Feeds{DB: a.DB, Bus: a.Hooks}).Attach(a.Bridge)
+	a.Discord = &discord.Service{DB: a.DB, Box: a.Box, Audit: srv.Audit, Log: srv.Log}
+	a.Discord.Init()
+	a.Discord.Register(srv.API)
+	a.Hooks.Subscribe(a.Discord.OnEvent)
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "discord", a.Discord.Run) })
+	bot := &publicapi.API{DB: a.DB, Box: a.Box, Audit: srv.Audit, Bus: a.Hooks, Status: a.publicStatus, Online: a.onlineNames}
+	bot.RegisterAdmin(srv.API)
+	bot.RegisterPublic(srv.Public)
+
+	// Emergency kill over SSH and data retention with compressed archives.
+	a.HostCtl = &hostctl.Service{DB: a.DB, Box: a.Box, Audit: srv.Audit, DataDir: a.Cfg.DataDir}
+	a.HostCtl.Init()
+	a.HostCtl.Register(srv.API)
+	a.Retention = &retention.Service{DB: a.DB, Audit: srv.Audit, Log: srv.Log, DataDir: a.Cfg.DataDir}
+	a.Retention.Register(srv.API)
+	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "retention", a.Retention.Run) })
+
 	_ = ctx
 	return nil
+}
+
+// publicStatus is the bot API's view of the server: nothing private.
+func (a *App) publicStatus(ctx context.Context) map[string]any {
+	s := a.RCON.Status()
+	out := map[string]any{"online": s.Online(), "players": len(s.Players)}
+	if s.Info != nil {
+		out["name"], out["map"], out["version"], out["max_players"] = s.Info.Name, s.Info.Map, s.Info.Version, s.Info.MaxPlayers
+		if s.RCON.State != rcon.StateOK {
+			out["players"] = s.Info.Players
+		}
+	}
+	if m := a.MetricZ.State(ctx); m.Available && m.Perf != nil {
+		if m.Perf.UptimeSecs != nil {
+			out["uptime_seconds"] = *m.Perf.UptimeSecs
+		}
+		if m.Perf.FPSAvg != nil {
+			out["fps"] = *m.Perf.FPSAvg
+		}
+	}
+	if p, _, err := a.Profiles.Active(ctx); err == nil {
+		sc := a.Restarts.Load(ctx, p.ID)
+		if next, ok := sc.Next(time.Now()); ok && sc.Enabled {
+			out["next_restart"] = next.UTC()
+			if t, skipped := a.Restarts.SkippedAt(ctx, p.ID); skipped && t.Equal(next.UTC().Truncate(time.Second)) {
+				out["next_restart_skipped"] = true
+			}
+		}
+	}
+	return out
+}
+
+func (a *App) onlineNames(ctx context.Context) []string {
+	names := []string{}
+	for _, p := range a.RCON.Status().Players {
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 type rconRoster struct{ m *rcon.Monitor }

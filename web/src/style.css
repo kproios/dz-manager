@@ -120,7 +120,29 @@ a:hover code { text-decoration: underline; }
 /* forms */
 input, select, textarea { background: #0d1115; color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; width: 100%; min-height: 30px; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px #6cb4ff33; }
-input[type=checkbox], input[type=radio] { width: 15px; height: 15px; min-height: 0; accent-color: var(--accent); margin: 0; }
+/* Custom checkboxes and radios: same size, crisp borders, clear checked state. */
+input[type=checkbox], input[type=radio] { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; flex: none; cursor: pointer;
+  border: 1.5px solid #4a5868; background: #0d1115; display: inline-grid; place-content: center; transition: background .12s, border-color .12s; vertical-align: middle; }
+input[type=checkbox] { border-radius: 4px; }
+input[type=radio] { border-radius: 50%; }
+input[type=checkbox]::after { content: ""; width: 9px; height: 5px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px) scale(0); transition: transform .12s; }
+input[type=radio]::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; transform: scale(0); transition: transform .12s; }
+input[type=checkbox]:checked, input[type=radio]:checked { background: var(--accent); border-color: var(--accent); }
+input[type=checkbox]:checked::after { transform: rotate(-45deg) translate(1px, -1px) scale(1); }
+input[type=radio]:checked { background: #0d1115; }
+input[type=radio]:checked::after { transform: scale(1); background: var(--accent); }
+input[type=checkbox]:hover:not(:disabled), input[type=radio]:hover:not(:disabled) { border-color: var(--accent); }
+input[type=checkbox]:focus-visible, input[type=radio]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+input[type=checkbox]:disabled, input[type=radio]:disabled { opacity: .4; cursor: not-allowed; }
+/* Toggle switch: <label class="switch"><input type="checkbox"><span/></label> */
+.switch { position: relative; display: inline-flex; width: 34px; height: 20px; flex: none; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: #2a3440; border: 1px solid #3a4654; transition: background .15s; }
+.switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #c3ccd5; transition: transform .15s; }
+.switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + span::after { transform: translateX(14px); background: #fff; }
+.switch input:disabled + span { opacity: .4; }
+.switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[aria-invalid=true] { border-color: var(--bad); }
 .row input, .row select { width: auto; }
 .form { display: flex; flex-direction: column; gap: 12px; }
@@ -283,8 +305,27 @@ blockquote { border-left: 3px solid var(--line-2); margin: 0; padding: 4px 12px;
 .kv span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .kv b { font-size: 17px; font-variant-numeric: tabular-nums; }
 .spark-kv { width: 120px; }
-.live-tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--side); padding: 0 8px; }
-.live-tabs button { height: 40px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 0 16px; font-size: 13px; }
+.live-tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--side); }
+.live-tabs button { flex: 1; height: 42px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 0 16px; font-size: 13px; }
+/* Section tabs that span the whole container */
+.tabs.full { display: flex; margin: 0 0 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; flex-wrap: wrap; }
+.tabs.full button { flex: 1 1 140px; height: 42px; border: 0; border-radius: 0; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; font-size: 13px; }
+.tabs.full button + button { border-left: 1px solid var(--line); }
+.tabs.full button[aria-selected=true] { color: #fff; background: var(--accent-bg); border-bottom-color: var(--accent); }
+.tabs.full button:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.tabs.full button[aria-selected=true]:hover { background: var(--accent-bg); color: #fff; }
+.timeline { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--side); flex-wrap: wrap; }
+.timeline input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); padding: 0; min-height: 0; border: 0; background: transparent; }
+.timeline-label { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.killer-pin span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff5a3c; border: 2px solid #fff; box-shadow: 0 0 0 1px #000a; }
+.icon-death { color: #e8e8e8; } .icon-truck { color: #ffb347; }
+.big.struck { text-decoration: line-through; opacity: .6; }
+pre.wrap { white-space: pre-wrap; word-break: break-all; }
+.feed-row.clickable { cursor: pointer; }
+.feed-row.clickable:hover { background: #22303d; }
+.map-link { display: inline-flex; width: 13px; height: 13px; margin-left: 6px; color: var(--accent); vertical-align: -2px; }
+.map-link svg { width: 13px; height: 13px; }
+.side-send { border-top: 1px solid var(--line); border-bottom: 0; }
 .live-tabs button[aria-selected=true] { color: #fff; border-bottom-color: var(--accent); }
 .live-tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
 .live-body { flex: 1; min-height: 0; overflow: auto; }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kproios/dz-manager/internal/audit"
+	"github.com/kproios/dz-manager/internal/hooks"
 	"github.com/kproios/dz-manager/internal/httpx"
 )
 
@@ -200,6 +201,7 @@ func (s *Service) manualTick(ctx context.Context, sc Schedule, now time.Time) {
 			continue
 		}
 		err := s.Exec(ctx, "say -1 "+sc.Announcement(x, m.At))
+		s.hook(hooks.Restart, fmt.Sprintf("Server restart in %d minute(s)", x), "Restart requested by an admin.")
 		res, detail := "ok", ""
 		if err != nil {
 			res, detail = "error", err.Error()

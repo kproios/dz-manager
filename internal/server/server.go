@@ -41,6 +41,8 @@ type Server struct {
 	API *http.ServeMux
 	// Ingest is the unauthenticated-by-session mux for game traffic; each handler authenticates the server itself.
 	Ingest *http.ServeMux
+	// Public is the read-only bot API (/public/v1); handlers check the bot token.
+	Public *http.ServeMux
 
 	ready   atomic.Bool
 	started time.Time
@@ -71,6 +73,8 @@ func New(s *Server) *Server {
 	s.API.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
 	s.Ingest.HandleFunc("POST /ingest/ping", s.ingestPing)
 	s.Ingest.HandleFunc("/ingest/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
+	s.Public = http.NewServeMux()
+	s.Public.HandleFunc("/public/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
 	return s
 }
 
@@ -99,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("POST /auth/logout", s.Auth.OptionalUser(http.HandlerFunc(s.Auth.Logout)))
 	root.Handle("/api/", s.Auth.RequireAPI(s.API))
 	root.Handle("/ingest/", s.limiter.wrap(http.MaxBytesHandler(s.Ingest, 4<<20)))
+	root.Handle("/public/", s.limiter.wrap(http.MaxBytesHandler(s.Public, 64<<10)))
 
 	static := http.FileServerFS(web.FS())
 	root.Handle("GET /assets/", static)

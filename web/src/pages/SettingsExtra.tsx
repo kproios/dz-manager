@@ -1,11 +1,163 @@
 import { useEffect, useState } from 'react'
 import { api, AutoMsgConfig, MapState } from '../api'
 import { useApi } from '../hooks'
-import { Badge, Card, Empty, ErrorBox, Seg } from '../ui'
+import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, Pager, Seg, usePaged } from '../ui'
 import { Icon } from '../icons'
 import { useNotify } from '../App'
 import { usePref } from '../prefs'
 import { iconLabels, iconSvg, MapIcon, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
+
+/** Emergency stop: SSH key pinned to a kill-only wrapper on the game host. */
+export function HostControl() {
+  const h = useApi<{ host: string; port: number; user: string; ready: boolean; authorized_keys_line: string; fingerprint: string; wrapper_path: string; wrapper_script: string }>('/api/settings/host')
+  const [f, setF] = useState<{ host: string; port: number; user: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [rotate, setRotate] = useState(false)
+  const notify = useNotify()
+  useEffect(() => { if (h.data && !f) setF({ host: h.data.host, port: h.data.port, user: h.data.user }) }, [h.data])
+  if (!h.data || !f) return h.error ? <Card title="Emergency stop"><ErrorBox error={h.error} /></Card> : null
+  const valid = /^[A-Za-z0-9.-]{1,253}$/.test(f.host) && f.port >= 1 && f.port <= 65535 && /^[a-z_][a-z0-9_-]{0,31}$/.test(f.user)
+  const run = async (fn: () => Promise<unknown>, ok: string) => { setBusy(true); try { await fn(); notify(ok); h.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setBusy(false) } }
+  return (
+    <Card title={<><Icon name="skull" />Emergency stop (kill a frozen server)</>} actions={h.data.ready ? <Badge state="ok">ready</Badge> : <Badge state="muted">not set up</Badge>}>
+      <p className="hint" style={{ marginTop: 0 }}>For a server that hangs and ignores RCON. DZ Manager connects over SSH with its own key; on the game host that key can only run a two-command wrapper (status, kill). Architect restarts the process afterwards.</p>
+      <div className="field-row">
+        <label className="field">Game host<input value={f.host} onChange={(e) => setF({ ...f, host: e.target.value.trim() })} placeholder="192.0.2.10" /></label>
+        <label className="field">SSH port<input type="number" min={1} max={65535} value={f.port} onChange={(e) => setF({ ...f, port: +e.target.value })} /></label>
+        <label className="field">User<input value={f.user} onChange={(e) => setF({ ...f, user: e.target.value.trim() })} /></label>
+      </div>
+      <div className="row end">
+        <button className="small" disabled={!valid || busy} onClick={() => run(() => api.put('/api/settings/host', f), 'Host saved')}>Save host</button>
+        <button className="small" disabled={busy} onClick={() => h.data!.authorized_keys_line ? setRotate(true) : run(() => api.post('/api/settings/host/key'), 'Key created')}><Icon name="lock" />{h.data.authorized_keys_line ? 'New key…' : 'Create key'}</button>
+        <button className="small" disabled={!h.data.ready || busy} onClick={() => run(async () => { const r = await api.post<{ status: string }>('/api/server/host-status'); notify('Game host answers: server ' + r.status) }, 'Connection works')}>Test connection</button>
+      </div>
+      {h.data.authorized_keys_line && <>
+        <h4>1 · Wrapper on the game host ({h.data.wrapper_path}, chmod 755)</h4>
+        <pre>{h.data.wrapper_script}</pre>
+        <h4 className="row">2 · Line for {f.user}'s ~/.ssh/authorized_keys<CopyButton value={h.data.authorized_keys_line} label="Copy line" /></h4>
+        <pre className="wrap">{h.data.authorized_keys_line}</pre>
+        <p className="hint">Key fingerprint {h.data.fingerprint}. The private key is stored encrypted and never shown.</p>
+      </>}
+      {rotate && <Confirm title="Create a new key?" confirmLabel="Create key" onClose={() => setRotate(false)} onConfirm={() => { setRotate(false); run(() => api.post('/api/settings/host/key'), 'New key created: replace the line on the game host') }} body={<p>The current key stops working until you replace the line in authorized_keys on the game host.</p>} />}
+    </Card>
+  )
+}
+
+/** Discord webhooks per channel. */
+export function DiscordChannels() {
+  const d = useApi<{ key: string; label: string; help: string; enabled: boolean; has_url: boolean }[]>('/api/settings/discord')
+  const [urls, setUrls] = useState<Record<string, string>>({})
+  const notify = useNotify()
+  const re = /^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\/\d{5,25}\/[A-Za-z0-9_-]{20,100}$/
+  const put = async (key: string, body: Record<string, unknown>, ok: string) => {
+    try { await api.put('/api/settings/discord/' + key, body); notify(ok); setUrls({ ...urls, [key]: '' }); d.reload() } catch (e: any) { notify(e.message, 'bad') }
+  }
+  const test = async (key: string) => { try { await api.post(`/api/settings/discord/${key}/test`); notify('Test message sent to Discord') } catch (e: any) { notify(e.message, 'bad') } }
+  return (
+    <Card title={<><Icon name="send" />Discord channels</>}>
+      <p className="hint" style={{ marginTop: 0 }}>In Discord: channel settings → Integrations → Webhooks → New webhook → Copy URL, then paste it here. Each channel only gets its kind of message; URLs are stored encrypted.</p>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Channel</th><th style={{ width: '50%' }}>Webhook</th><th>On</th><th /></tr></thead>
+        <tbody>{(d.data ?? []).map((c) => {
+          const u = urls[c.key] ?? ''
+          return <tr key={c.key}>
+            <td><b>{c.label}</b><div className="muted small">{c.help}</div></td>
+            <td style={{ minWidth: 280 }}>
+              <div className="row">
+                <input type="password" autoComplete="off" placeholder={c.has_url ? 'Saved · paste a new URL to replace' : 'https://discord.com/api/webhooks/…'} value={u} aria-invalid={u !== '' && !re.test(u.trim())} onChange={(e) => setUrls({ ...urls, [c.key]: e.target.value })} />
+                <button className="small" disabled={!re.test(u.trim())} onClick={() => put(c.key, { enabled: true, url: u.trim() }, c.label + ' connected')}>Save</button>
+              </div>
+            </td>
+            <td><label className="switch" title={c.has_url ? 'Send to this channel' : 'Save a webhook first'}><input type="checkbox" checked={c.enabled} disabled={!c.has_url} onChange={(e) => put(c.key, { enabled: e.target.checked }, e.target.checked ? c.label + ' on' : c.label + ' off')} /><span /></label></td>
+            <td className="num"><div className="btn-group" style={{ justifyContent: 'flex-end' }}>
+              <button className="small ghost" disabled={!c.has_url} onClick={() => test(c.key)}>Test</button>
+              {c.has_url && <button className="small ghost" onClick={() => put(c.key, { enabled: false, url: '' }, c.label + ' disconnected')}>Remove</button>}
+            </div></td>
+          </tr>
+        })}</tbody>
+      </table></div>
+    </Card>
+  )
+}
+
+const BOT_ENDPOINTS: [string, string][] = [
+  ['/public/v1/status', 'Name, players online, uptime, FPS, next restart'],
+  ['/public/v1/online', 'Names of players online'],
+  ['/public/v1/killfeed?limit=20', 'Latest kills: killer, victim, weapon, distance'],
+  ['/public/v1/leaderboard?by=kills|playtime|kd', 'Top players'],
+  ['/public/v1/player?name=Alice', 'Stats for one player by name'],
+  ['/public/v1/bans', 'Active bans: name, reason, until'],
+  ['/public/v1/events', 'How many helicrashes/airdrops/convoys are active (no locations)'],
+  ['/public/v1/info', 'Your server info text below (rules, mechanics, FAQ)'],
+  ['/public/v1/feed?after=0', 'Every public event in order (kills, joins, raids, bans, restarts); poll with the last id'],
+]
+
+/** Token-protected read-only API for a Discord bot. */
+export function BotApi() {
+  const b = useApi<{ enabled: boolean; created_at: string; info: string; base_path: string }>('/api/settings/bot')
+  const [token, setToken] = useState('')
+  const [info, setInfo] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<'new' | 'revoke' | null>(null)
+  const notify = useNotify()
+  if (!b.data) return b.error ? <Card title="Bot API"><ErrorBox error={b.error} /></Card> : null
+  const text = info ?? b.data.info
+  const newToken = async () => { try { const r = await api.post<{ token: string }>('/api/settings/bot/token'); setToken(r.token); b.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setConfirm(null) } }
+  const revoke = async () => { try { await api.post('/api/settings/bot/revoke'); setToken(''); notify('Bot token revoked'); b.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setConfirm(null) } }
+  const saveInfo = async () => { try { await api.put('/api/settings/bot/info', { info: text }); setInfo(null); notify('Server info saved'); b.reload() } catch (e: any) { notify(e.message, 'bad') } }
+  return (
+    <Card title={<><Icon name="chat" />Bot API (for a Discord bot)</>} actions={b.data.enabled ? <Badge state="ok">token active</Badge> : <Badge state="muted">no token</Badge>}>
+      <p className="hint" style={{ marginTop: 0 }}>Read-only and public-safe: no Steam IDs, IPs or exact event locations. Send the token as <code>Authorization: Bearer …</code> to <code>{window.location.origin}{b.data.base_path}</code>.</p>
+      <div className="row">
+        <button className="small primary" onClick={() => b.data!.enabled ? setConfirm('new') : newToken()}>{b.data.enabled ? 'New token…' : 'Create token'}</button>
+        {b.data.enabled && <button className="small ghost" onClick={() => setConfirm('revoke')}>Revoke</button>}
+        {b.data.created_at && <span className="muted small">created {new Date(b.data.created_at).toLocaleString()}</span>}
+      </div>
+      {token && <div className="warnings" style={{ marginTop: 10 }}><b>Copy this token now, it is shown only once:</b> <span className="id-line"><code>{token}</code><CopyButton value={token} label="Copy token" /></span></div>}
+      <h4>Endpoints</h4>
+      <table className="small"><tbody>{BOT_ENDPOINTS.map(([p, d]) => <tr key={p}><td><code>GET {p}</code></td><td className="muted">{d}</td></tr>)}</tbody></table>
+      <h4>Server info for the bot</h4>
+      <textarea rows={6} value={text} maxLength={20000} placeholder={'Rules, wipe schedule, how raiding works, trader locations, Discord links…\nThe bot can quote this when players ask questions.'} onChange={(e) => setInfo(e.target.value)} />
+      <div className="row end"><span className="muted small">{text.length}/20000</span><button className="small" disabled={info == null} onClick={saveInfo}>Save info</button></div>
+      {confirm && <Confirm title={confirm === 'new' ? 'Create a new token?' : 'Revoke the bot token?'} confirmLabel={confirm === 'new' ? 'Create token' : 'Revoke'} onClose={() => setConfirm(null)} onConfirm={confirm === 'new' ? newToken : revoke}
+        body={<p>The current token stops working immediately{confirm === 'new' ? '; update your bot with the new one' : ''}.</p>} />}
+    </Card>
+  )
+}
+
+/** Data retention: archive old rows into compressed files. */
+export function Retention() {
+  const r = useApi<{ settings: { archive_after_days: number; keep_archive_days: number }; archive_after: number[]; keep_archives: number[]; db_bytes: number; rows: Record<string, number>; archives: { name: string; table: string; bytes: number; created: string }[] }>('/api/settings/retention')
+  const [busy, setBusy] = useState(false)
+  const notify = useNotify()
+  const pg = usePaged(r.data?.archives, 10)
+  if (!r.data) return r.error ? <Card title="Data retention"><ErrorBox error={r.error} /></Card> : null
+  const st = r.data.settings
+  const save = async (patch: Partial<typeof st>) => { try { await api.put('/api/settings/retention', { ...st, ...patch }); notify('Retention saved'); r.reload() } catch (e: any) { notify(e.message, 'bad') } }
+  const runNow = async () => {
+    setBusy(true)
+    try { const out = await api.post<{ archived: Record<string, number> }>('/api/archives/run'); const n = Object.values(out.archived).reduce((a, b) => a + b, 0); notify(n ? `Archived ${n.toLocaleString()} rows` : 'Nothing old enough to archive'); r.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setBusy(false) }
+  }
+  const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB'
+  const labels: Record<string, string> = { events: 'Activity events', chat_messages: 'Chat', map_events: 'Map markers', metricz_perf: 'Performance samples', bridge_commands: 'Bridge commands' }
+  return (
+    <Card title={<><Icon name="audit" />Data retention</>} actions={<button className="small" disabled={busy} onClick={runNow}>{busy ? 'Archiving…' : 'Archive now'}</button>}>
+      <p className="hint" style={{ marginTop: 0 }}>Every day, finished records older than the first period are moved out of the database into compressed files (gzip, one per table and day); files older than the second period are deleted. The audit log is never archived.</p>
+      <div className="field-row">
+        <div className="field">Keep in the database<Seg label="Archive after" value={st.archive_after_days} onChange={(v) => save({ archive_after_days: v })} options={r.data.archive_after.map((d) => [d, d + ' days'])} /></div>
+        <div className="field">Keep archive files<Seg label="Keep archives" value={st.keep_archive_days} onChange={(v) => save({ keep_archive_days: v })} options={r.data.keep_archives.map((d) => [d, d >= 365 ? d / 365 + (d === 365 ? ' year' : ' years') : d + ' days'])} /></div>
+      </div>
+      <div className="statline" style={{ margin: '14px 0' }}>
+        <div><span className="k">Database</span><span className="v">{mb(r.data.db_bytes)}</span></div>
+        {Object.entries(r.data.rows).map(([t, n]) => <div key={t}><span className="k">{labels[t] || t}</span><span className="v">{n.toLocaleString()}</span></div>)}
+      </div>
+      <h4>Archives</h4>
+      {!r.data.archives.length ? <Empty>No archives yet.</Empty> : <>
+        <table><tbody>{pg.rows.map((a) => <tr key={a.name}><td><a href={'/api/archives/' + encodeURIComponent(a.name)} download>{a.name}</a></td><td className="muted">{labels[a.table] || a.table}</td><td className="num">{mb(a.bytes)}</td><td className="muted small">{new Date(a.created).toLocaleDateString()}</td></tr>)}</tbody></table>
+        <Pager {...pg} noun="files" />
+      </>}
+    </Card>
+  )
+}
 
 /** IP lookup switch and optional Steam Web API key. */
 export function PlayerChecks() {

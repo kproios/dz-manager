@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ChatMessage, MapState, PerfPoint, Player, RconPlayer, ServerStatus } from '../api'
 import { useApi } from '../hooks'
 import { Badge, Empty, ErrorBox, Meter, Trunc } from '../ui'
@@ -14,7 +14,7 @@ import MapPage from './MapPage'
 import { ServerControls } from './Restarts'
 import { kd } from './Players'
 
-interface Ev { id: number; ts: string; type: string; actor: string; actor_name: string; data: Record<string, unknown> }
+interface Ev { id: number; event_id: string; ts: string; type: string; actor: string; actor_name: string; data: Record<string, unknown> }
 type FeedKind = 'chat' | 'join' | 'death' | 'raid'
 
 /** Live server view: players and map side by side with a message box and live feed. */
@@ -22,6 +22,7 @@ export default function Live({ tab: initial }: { tab?: string }) {
   const [tabPref, setTab] = usePref<'players' | 'map'>('live.tab', 'players')
   const tab = (initial === 'map' || initial === 'players') ? initial : tabPref
   const [focus, setFocus] = useState<string | undefined>()
+  const [focusKey, setFocusKey] = useState<string | undefined>()
   const status = useApi<ServerStatus>('/api/server/status', ['server_status'])
   const map = useApi<MapState>('/api/map/state', ['map'], 15000)
   const perf = useApi<PerfPoint[]>('/api/perf?hours=2', [], 60000)
@@ -46,10 +47,10 @@ export default function Live({ tab: initial }: { tab?: string }) {
           <button role="tab" aria-selected={tab === 'map'} onClick={() => go('map')}><Icon name="map" />Map</button>
         </div>
         <div className={'live-body' + (tab === 'map' ? ' is-map' : '')}>
-          {tab === 'map' ? <MapPage focusId={focus} /> : <Online status={s} map={map.data} onShow={(id) => { setFocus(id); go('map') }} />}
+          {tab === 'map' ? <MapPage focusId={focus} focusKey={focusKey} /> : <Online status={s} map={map.data} onShow={(id) => { setFocus(id); setFocusKey(undefined); go('map') }} />}
         </div>
       </div>
-      <Side status={s} />
+      <Side status={s} onShowOnMap={(k) => { setFocusKey(k); setFocus(undefined); go('map') }} />
     </div>
   )
 }
@@ -115,7 +116,7 @@ function Online({ status, map, onShow }: { status?: ServerStatus | null; map?: M
 
 const FEED_KINDS: [FeedKind, string][] = [['chat', 'Chat'], ['join', 'Joins & leaves'], ['death', 'Deaths'], ['raid', 'Raids']]
 
-function Side({ status }: { status?: ServerStatus | null }) {
+function Side({ status, onShowOnMap }: { status?: ServerStatus | null; onShowOnMap: (markerKey: string) => void }) {
   const notify = useNotify()
   const [msg, setMsg] = useState('')
   const [to, setTo] = useState('')
@@ -135,7 +136,7 @@ function Side({ status }: { status?: ServerStatus | null }) {
     } catch (e: any) { notify(e.message, 'bad') } finally { setBusy(false) }
   }
   const feed = useMemo(() => {
-    const out: { key: string; ts: string; kind: FeedKind; who: string; steam?: string; text: string; cls: string }[] = []
+    const out: { key: string; ts: string; kind: FeedKind; who: string; steam?: string; text: string; cls: string; mapKey?: string }[] = []
     for (const c of chat.data ?? []) out.push({ key: 'c' + c.id, ts: c.ts, kind: 'chat', who: c.name, text: c.text, cls: c.channel === 'admin' ? 'admin' : 'chat' })
     for (const e of evs.data?.items ?? []) {
       const name = e.actor_name || e.actor
@@ -150,37 +151,44 @@ function Side({ status }: { status?: ServerStatus | null }) {
         const byPlayer = typeof e.data?.killer === 'string' && e.data.killer !== ''
         const weapon = typeof e.data?.weapon === 'string' ? e.data.weapon : ''
         const cause = typeof e.data?.cause === 'string' ? e.data.cause : ''
-        out.push({ key: 'e' + e.id, ts: e.ts, kind: 'death', who: name, steam: e.actor, text: byPlayer ? `was killed by a player${weapon ? ' (' + weapon + ')' : ''}` : cause ? `died (${cause})` : 'died', cls: 'death' })
+        out.push({ key: 'e' + e.id, ts: e.ts, kind: 'death', who: name, steam: e.actor, text: byPlayer ? `was killed by a player${weapon ? ' (' + weapon + ')' : ''}` : cause ? `died (${cause})` : 'died', cls: 'death', mapKey: 'death:' + e.event_id })
       }
     }
-    return out.filter((x) => kinds.includes(x.kind)).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 120)
+    // Chat reads top to bottom: oldest first, newest at the bottom next to the message box.
+  return out.filter((x) => kinds.includes(x.kind)).sort((a, b) => a.ts.localeCompare(b.ts)).slice(-120)
   }, [chat.data, evs.data, kinds])
+  const feedRef = useRef<HTMLDivElement>(null)
+  const stick = useRef(true)
+  useEffect(() => {
+    const el = feedRef.current
+    if (el && stick.current) el.scrollTop = el.scrollHeight
+  }, [feed])
   return (
     <aside className="live-side" aria-label="Messages and live feed">
-      <div className="side-send">
-        <div className="row">
-          <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Recipient" disabled={!rconOk}>
-            <option value="">Everyone</option>
-            {players.map((p) => <option key={p.be_guid} value={p.be_guid}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="row">
-          <input value={msg} maxLength={200} disabled={!rconOk || busy} placeholder={rconOk ? (to ? 'Private message…' : 'Message to all players…') : 'RCON not connected'}
-            onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send() }} />
-          <button className="primary icon" style={{ width: 34, height: 30 }} disabled={!rconOk || busy || !msg.trim()} onClick={send} title="Send (Enter)"><Icon name="send" /></button>
-        </div>
-      </div>
       <div className="feed-head">
         <b>Live feed</b>
         <span className="chips">{FEED_KINDS.map(([k, l]) => <button key={k} type="button" className="chip toggle" aria-pressed={kinds.includes(k)} onClick={() => setKinds(kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k])}>{l}</button>)}</span>
       </div>
-      <div className="feed" aria-live="polite">
+      <div className="feed" aria-live="polite" ref={feedRef} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40 }}>
         {!feed.length ? <Empty>Nothing yet. In-game chat appears here when BattlEye reports it.</Empty> : feed.map((f) => (
-          <div key={f.key} className={'feed-row ' + f.cls} title={new Date(f.ts).toLocaleString()}>
+          <div key={f.key} className={'feed-row ' + f.cls + (f.mapKey ? ' clickable' : '')} title={f.mapKey ? 'Show on the map' : new Date(f.ts).toLocaleString()}
+            onClick={f.mapKey ? () => onShowOnMap(f.mapKey!) : undefined} role={f.mapKey ? 'button' : undefined} tabIndex={f.mapKey ? 0 : undefined}
+            onKeyDown={f.mapKey ? (e) => { if (e.key === 'Enter') onShowOnMap(f.mapKey!) } : undefined}>
             <span className="t">{new Date(f.ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}</span>
-            <span className="m">{f.steam ? <a href={'#/players/' + f.steam}>{f.who}</a> : <b>{f.who}</b>}{f.kind === 'chat' ? ': ' : ' '}<span>{f.text}</span></span>
+            <span className="m">{f.steam ? <a href={'#/players/' + f.steam} onClick={(e) => e.stopPropagation()}>{f.who}</a> : <b>{f.who}</b>}{f.kind === 'chat' ? ': ' : ' '}<span>{f.text}</span>{f.mapKey && <span className="map-link"><Icon name="map" /></span>}</span>
           </div>
         ))}
+      </div>
+      <div className="side-send">
+        <div className="row">
+          <select value={to} onChange={(e) => setTo(e.target.value)} aria-label="Recipient" disabled={!rconOk} style={{ width: 130, flex: 'none' }}>
+            <option value="">Everyone</option>
+            {players.map((p) => <option key={p.be_guid} value={p.be_guid}>{p.name}</option>)}
+          </select>
+          <input value={msg} maxLength={200} disabled={!rconOk || busy} placeholder={rconOk ? (to ? 'Private message…' : 'Message to all players…') : 'RCON not connected'}
+            onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send() }} />
+          <button className="primary icon" style={{ width: 34, height: 30, flex: 'none' }} disabled={!rconOk || busy || !msg.trim()} onClick={send} title="Send (Enter)"><Icon name="send" /></button>
+        </div>
       </div>
     </aside>
   )

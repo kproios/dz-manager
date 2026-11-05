@@ -759,6 +759,21 @@ class DZMB_Bridge
 		array<CargoBase> cargo = new array<CargoBase>;
 		m_ScanStarted = GetGame().GetTime();
 		GetGame().GetObjectsAtPosition3D("7680 0 7680", 12000, m_ScanObjects, cargo);
+		// Tracked items already sitting inside containers are found through the cargo list.
+		if (DZMB_Config.Get().rare_items.Count() > 0)
+		{
+			foreach (CargoBase c : cargo)
+			{
+				if (!c)
+					continue;
+				for (int ci = 0; ci < c.GetItemCount(); ci++)
+				{
+					EntityAI inCargo = c.GetItem(ci);
+					if (inCargo && IsDZMBTrackedEntity(inCargo))
+						m_ScanObjects.Insert(inCargo);
+				}
+			}
+		}
 		m_ScanIndex = 0;
 		m_ScanEvents = 0;
 		m_ScanItems = 0;
@@ -793,16 +808,31 @@ class DZMB_Bridge
 
 	void OnEntitySpawned(EntityAI e)
 	{
-		if (!e || e.IsHologram() || e.GetHierarchyParent()) { if(e) OnEntityDeleted(e); return; }
+		if (!e || e.IsHologram()) { if (e) OnEntityDeleted(e); return; }
+		string kind = "item";
+		if (GetGame().ConfigIsExisting("CfgWeapons " + e.GetType())) kind = "weapon";
+		if (e.GetHierarchyParent())
+		{
+			// Tracked items inside a container (stash, crate, PC, tent…) are shown at
+			// the container, but never while a player carries them.
+			if (!IsDZMBTrackedEntity(e) || e.GetHierarchyRootPlayer()) { OnEntityDeleted(e); return; }
+			EntityAI root = e.GetHierarchyRoot();
+			if (!root) { OnEntityDeleted(e); return; }
+			EmitMarkerAt(e, root.GetPosition(), "tracked_item", e.GetType(), kind, "", 0, root.GetType());
+			return;
+		}
 		string cat;
 		if (IsDZMBTrackedEntity(e)) cat = "tracked_item";
 		else if (!EventCategory(e, cat)) { OnEntityDeleted(e); return; }
-		string kind = "item";
-		if (GetGame().ConfigIsExisting("CfgWeapons " + e.GetType())) kind = "weapon";
 		EmitMarker(e, cat, e.GetType(), kind, "", 0);
 	}
 
 	void EmitMarker(EntityAI e, string cat, string name, string kind, string group, float radius)
+	{
+		EmitMarkerAt(e, e.GetPosition(), cat, name, kind, group, radius, "");
+	}
+
+	void EmitMarkerAt(EntityAI e, vector pos, string cat, string name, string kind, string group, float radius, string container)
 	{
 		DZMB_Json d = new DZMB_Json();
 		string type = "event.start";
@@ -810,7 +840,9 @@ class DZMB_Bridge
 		if (!m_EventKeys.Contains(e)) m_EventKeys.Set(e, m_Boot + ":" + EntityKey(e) + ":" + m_Seq.ToString());
 		d.Str("key", m_EventKeys.Get(e)).Str("category", cat).Str("class", e.GetType());
 		d.Str("name", name).Str("kind", kind).Str("group", group).IntV("radius", radius);
-		Emit(type, "", "", d.End(), true, e.GetPosition());
+		if (container != "")
+			d.Str("container", container);
+		Emit(type, "", "", d.End(), true, pos);
 	}
 
 	static bool IsDZMBTrackedEntity(EntityAI e)

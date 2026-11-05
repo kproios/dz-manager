@@ -48,8 +48,13 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	args = append(args, limit+1)
-	rows, err := b.DB.QueryContext(r.Context(), `SELECT e.id,e.event_id,e.type,e.ts,e.actor,COALESCE(p.name,e.actor),e.data,e.known FROM events e
- LEFT JOIN players p ON p.steam64=e.actor WHERE e.server_id=? AND (?=0 OR `+cursor+`)
+	// event.start/event.end only carry a key: join the marker so the log can
+	// say which event it was and where.
+	rows, err := b.DB.QueryContext(r.Context(), `SELECT e.id,e.event_id,e.type,e.ts,e.actor,COALESCE(p.name,e.actor),e.data,e.known,
+ COALESCE(m.category,''),COALESCE(m.class,''),COALESCE(json_extract(m.data,'$.name'),''),COALESCE(m.x,0),COALESCE(m.z,0) FROM events e
+ LEFT JOIN players p ON p.steam64=e.actor
+ LEFT JOIN map_events m ON e.type IN ('event.start','event.end') AND m.server_id=e.server_id AND m.key=json_extract(e.data,'$.key')
+ WHERE e.server_id=? AND (?=0 OR `+cursor+`)
  AND (? OR e.type NOT IN ('heartbeat','event.seen'))
  AND (?='' OR (e.actor||' '||COALESCE(p.name,'')||' '||e.type||' '||replace(replace(e.type,'.',' '),'_',' ')||' '||e.data) LIKE ? ESCAPE '\')
  AND `+typeSQL+`
@@ -62,9 +67,10 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 	var last int64
 	for rows.Next() {
 		var id int64
-		var eventID, kind, ts, actor, name, data string
+		var eventID, kind, ts, actor, name, data, mCat, mClass, mName string
+		var mx, mz float64
 		var known bool
-		if err := rows.Scan(&id, &eventID, &kind, &ts, &actor, &name, &data, &known); err != nil {
+		if err := rows.Scan(&id, &eventID, &kind, &ts, &actor, &name, &data, &known, &mCat, &mClass, &mName, &mx, &mz); err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
 		}
@@ -72,7 +78,11 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 			out.NextBefore = last
 			break
 		}
-		out.Items = append(out.Items, map[string]any{"id": id, "event_id": eventID, "type": kind, "ts": ts, "actor": actor, "actor_name": name, "data": json.RawMessage(data), "known": known})
+		item := map[string]any{"id": id, "event_id": eventID, "type": kind, "ts": ts, "actor": actor, "actor_name": name, "data": json.RawMessage(data), "known": known}
+		if mCat != "" {
+			item["subject"] = map[string]any{"category": mCat, "class": mClass, "name": mName, "x": mx, "z": mz}
+		}
+		out.Items = append(out.Items, item)
 		last = id
 	}
 	if err := rows.Err(); err != nil {
