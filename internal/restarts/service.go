@@ -379,6 +379,10 @@ func (s *Service) drive(ctx context.Context, sc Schedule, next, now time.Time) {
 		if !s.once(fmt.Sprintf("drive:%s:%d:%s", sc.ServerID, next.Unix(), st.cmd)) {
 			continue
 		}
+		// Last check right before acting: a skip can arrive during this tick.
+		if s.skipped(ctx, sc.ServerID, next) {
+			continue
+		}
 		if sc.DryRun || !s.Caps.OK(sc.ServerID, caps.RestartDrive) {
 			s.Log.Info("restart drive (dry-run or not verified): would send", "cmd", st.cmd, "planned_for", next)
 			_ = s.Audit.Write(ctx, audit.System, "restart.drive_dryrun", sc.ServerID, map[string]any{"cmd": st.cmd, "planned_for": next.UTC()}, "ok", "dry-run")

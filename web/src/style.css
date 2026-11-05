@@ -296,7 +296,7 @@ blockquote { border-left: 3px solid var(--line-2); margin: 0; padding: 4px 12px;
 .msg-list li button.icon { width: 24px; height: 24px; }
 
 /* live */
-.live { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: 100%; }
+.live { display: grid; grid-template-columns: minmax(0, 1fr) 380px; height: 100%; }
 .live-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .live-head { display: flex; align-items: center; gap: 22px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--side); flex-wrap: wrap; }
 .live-title { display: flex; flex-direction: column; min-width: 0; }
@@ -314,9 +314,13 @@ blockquote { border-left: 3px solid var(--line-2); margin: 0; padding: 4px 12px;
 .tabs.full button[aria-selected=true] { color: #fff; background: var(--accent-bg); border-bottom-color: var(--accent); }
 .tabs.full button:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 .tabs.full button[aria-selected=true]:hover { background: var(--accent-bg); color: #fff; }
-.timeline { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--side); flex-wrap: wrap; }
-.timeline input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); padding: 0; min-height: 0; border: 0; background: transparent; }
-.timeline-label { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+/* History bar: fixed columns so the slider keeps its size while the label changes. */
+.timeline { display: grid; grid-template-columns: auto minmax(120px, 1fr) 150px 92px; align-items: center; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--side); flex: none; }
+.timeline input[type=range] { width: 100%; margin: 0; accent-color: var(--accent); padding: 0; min-height: 0; height: 20px; border: 0; background: transparent; }
+.timeline-label { display: flex; flex-direction: column; font-size: 12px; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.timeline > button { white-space: nowrap; }
+@media (max-width: 760px) { .timeline { grid-template-columns: 1fr 92px; } .timeline > .seg, .timeline input[type=range] { grid-column: 1 / -1; } }
+.layers .chip.toggle[aria-pressed=false] { opacity: .55; text-decoration: line-through; }
 .killer-pin span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff5a3c; border: 2px solid #fff; box-shadow: 0 0 0 1px #000a; }
 .icon-death { color: #e8e8e8; } .icon-truck { color: #ffb347; }
 .big.struck { text-decoration: line-through; opacity: .6; }
@@ -335,6 +339,11 @@ pre.wrap { white-space: pre-wrap; word-break: break-all; }
 .live-side { border-left: 1px solid var(--line); background: var(--side); display: flex; flex-direction: column; min-height: 0; }
 .side-send { padding: 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); }
 .side-send .row input, .side-send .row select { width: 100%; flex: 1; }
+.send-to { display: flex; align-items: center; gap: 8px; }
+.send-to select { flex: 1; min-width: 0; }
+.send-box { display: flex; flex-direction: column; gap: 6px; }
+.send-box textarea { resize: vertical; min-height: 64px; max-height: 160px; line-height: 1.4; padding: 7px 9px; }
+.send-box button { align-self: flex-end; }
 .feed-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .feed-head .chip { height: 22px; font-size: 11px; padding: 0 8px; }
 .feed { flex: 1; overflow: auto; padding: 4px 0; }

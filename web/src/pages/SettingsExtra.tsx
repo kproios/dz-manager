@@ -7,42 +7,6 @@ import { useNotify } from '../App'
 import { usePref } from '../prefs'
 import { iconLabels, iconSvg, MapIcon, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
 
-/** Emergency stop: SSH key pinned to a kill-only wrapper on the game host. */
-export function HostControl() {
-  const h = useApi<{ host: string; port: number; user: string; ready: boolean; authorized_keys_line: string; fingerprint: string; wrapper_path: string; wrapper_script: string }>('/api/settings/host')
-  const [f, setF] = useState<{ host: string; port: number; user: string } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [rotate, setRotate] = useState(false)
-  const notify = useNotify()
-  useEffect(() => { if (h.data && !f) setF({ host: h.data.host, port: h.data.port, user: h.data.user }) }, [h.data])
-  if (!h.data || !f) return h.error ? <Card title="Emergency stop"><ErrorBox error={h.error} /></Card> : null
-  const valid = /^[A-Za-z0-9.-]{1,253}$/.test(f.host) && f.port >= 1 && f.port <= 65535 && /^[a-z_][a-z0-9_-]{0,31}$/.test(f.user)
-  const run = async (fn: () => Promise<unknown>, ok: string) => { setBusy(true); try { await fn(); notify(ok); h.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setBusy(false) } }
-  return (
-    <Card title={<><Icon name="skull" />Emergency stop (kill a frozen server)</>} actions={h.data.ready ? <Badge state="ok">ready</Badge> : <Badge state="muted">not set up</Badge>}>
-      <p className="hint" style={{ marginTop: 0 }}>For a server that hangs and ignores RCON. DZ Manager connects over SSH with its own key; on the game host that key can only run a two-command wrapper (status, kill). Architect restarts the process afterwards.</p>
-      <div className="field-row">
-        <label className="field">Game host<input value={f.host} onChange={(e) => setF({ ...f, host: e.target.value.trim() })} placeholder="192.0.2.10" /></label>
-        <label className="field">SSH port<input type="number" min={1} max={65535} value={f.port} onChange={(e) => setF({ ...f, port: +e.target.value })} /></label>
-        <label className="field">User<input value={f.user} onChange={(e) => setF({ ...f, user: e.target.value.trim() })} /></label>
-      </div>
-      <div className="row end">
-        <button className="small" disabled={!valid || busy} onClick={() => run(() => api.put('/api/settings/host', f), 'Host saved')}>Save host</button>
-        <button className="small" disabled={busy} onClick={() => h.data!.authorized_keys_line ? setRotate(true) : run(() => api.post('/api/settings/host/key'), 'Key created')}><Icon name="lock" />{h.data.authorized_keys_line ? 'New key…' : 'Create key'}</button>
-        <button className="small" disabled={!h.data.ready || busy} onClick={() => run(async () => { const r = await api.post<{ status: string }>('/api/server/host-status'); notify('Game host answers: server ' + r.status) }, 'Connection works')}>Test connection</button>
-      </div>
-      {h.data.authorized_keys_line && <>
-        <h4>1 · Wrapper on the game host ({h.data.wrapper_path}, chmod 755)</h4>
-        <pre>{h.data.wrapper_script}</pre>
-        <h4 className="row">2 · Line for {f.user}'s ~/.ssh/authorized_keys<CopyButton value={h.data.authorized_keys_line} label="Copy line" /></h4>
-        <pre className="wrap">{h.data.authorized_keys_line}</pre>
-        <p className="hint">Key fingerprint {h.data.fingerprint}. The private key is stored encrypted and never shown.</p>
-      </>}
-      {rotate && <Confirm title="Create a new key?" confirmLabel="Create key" onClose={() => setRotate(false)} onConfirm={() => { setRotate(false); run(() => api.post('/api/settings/host/key'), 'New key created: replace the line on the game host') }} body={<p>The current key stops working until you replace the line in authorized_keys on the game host.</p>} />}
-    </Card>
-  )
-}
-
 /** Discord webhooks per channel. */
 export function DiscordChannels() {
   const d = useApi<{ key: string; label: string; help: string; enabled: boolean; has_url: boolean }[]>('/api/settings/discord')

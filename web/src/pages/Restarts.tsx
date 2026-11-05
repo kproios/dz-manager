@@ -18,7 +18,7 @@ function SkipButton({ skipped, provider, reload }: { skipped: boolean; provider:
   return <>
     <button className="small" onClick={() => skipped ? toggle() : setOpen(true)} title={skipped ? 'Run the next restart after all' : 'Skip only the next planned restart'}><Icon name={skipped ? 'restarts' : 'clock'} />{skipped ? 'Undo skip' : 'Skip next restart'}</button>
     {open && <Confirm title="Skip the next restart?" tone="primary" confirmLabel="Skip it" onClose={() => setOpen(false)} onConfirm={toggle} body={<>
-      <p>No warnings, lock, kick or shutdown for the next planned restart. The one after runs normally, and you can undo this until then.</p>
+      <p>The next planned restart does not happen: no warnings, lock, kick or shutdown. If its countdown already started, the server is unlocked again and players are told it is cancelled. The one after runs normally, and you can undo this until then.</p>
       {provider && <p className="warn small">Your provider's own schedule still restarts the server: in provider mode this only stops DZ Manager's warnings, lock and kick.</p>}
     </>} />}
   </>
@@ -272,8 +272,7 @@ export function ServerControls({ resp, reload }: { resp?: Resp | null; reload?: 
   const r = useApi<Resp>(resp ? null : '/api/restarts', ['restarts', 'capabilities'])
   const data = resp ?? r.data
   const notify = useNotify()
-  const [open, setOpen] = useState<'restart' | 'kick' | 'lock' | 'unlock' | 'kill' | null>(null)
-  const host = useApi<{ ready: boolean; host: string }>('/api/settings/host')
+  const [open, setOpen] = useState<'restart' | 'kick' | 'lock' | 'unlock' | null>(null)
   const [busy, setBusy] = useState(false)
   const [delay, setDelay] = useState(5)
   const [kickMsg, setKickMsg] = useState(KICK_MESSAGES[0])
@@ -297,14 +296,7 @@ export function ServerControls({ resp, reload }: { resp?: Resp | null; reload?: 
         {locked == null && <button className="small ghost" disabled={!rconOk} onClick={() => setOpen('unlock')} title="Allow players to join"><Icon name="unlock" />Unlock</button>}
         <button className="small danger" disabled={!rconOk} title={rconOk ? 'Kick every player' : 'Requires RCON'} onClick={() => setOpen('kick')}><Icon name="kick" />Kick all</button>
         <button className="small danger" disabled={!canRestart} title={restartWhy || 'Restart the game server'} onClick={() => setOpen('restart')}><Icon name="power" />Restart…</button>
-        <button className="small danger" disabled={!host.data?.ready} title={host.data?.ready ? 'Force-stop a frozen server process (the provider starts it again)' : 'Set up the emergency stop in Settings → Server first'} onClick={() => setOpen('kill')}><Icon name="skull" />Kill…</button>
       </span>
-      {open === 'kill' && <Confirm title="Kill the game server process?" word="KILL" confirmLabel="Kill process" busy={busy} onClose={() => setOpen(null)}
-        onConfirm={() => act(() => api.post('/api/server/kill', { confirm: 'KILL' }), 'Server process killed; the provider starts it again')}
-        body={<div className="small">
-          <p>Use this only when the server is frozen and does not react to Restart. The process is stopped at once (like a crash): <b>progress since the last autosave can be lost</b> and players are disconnected.</p>
-          <p className="muted">Runs on {host.data?.host} through the restricted SSH key; Architect (or your provider) starts the server again.</p>
-        </div>} />}
       {(open === 'lock' || open === 'unlock') && <Confirm title={open === 'lock' ? 'Lock the server?' : 'Unlock the server?'} tone="primary" confirmLabel={open === 'lock' ? 'Lock' : 'Unlock'} busy={busy} onClose={() => setOpen(null)}
         onConfirm={() => act(() => api.post('/api/rcon/' + open), open === 'lock' ? 'Server locked: no new joins' : 'Server unlocked')}
         body={<p>{open === 'lock' ? 'Players already online stay connected; nobody new can join until you unlock or the server restarts.' : 'Players can join again.'}</p>} />}

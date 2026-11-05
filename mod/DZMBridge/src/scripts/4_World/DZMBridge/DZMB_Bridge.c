@@ -212,7 +212,6 @@ class DZMB_Bridge
 			m_LastTrackingScan = GetGame().GetTime();
 			ReconcileTracking();
 		}
-		ContinueTrackingScan();
 		if (m_EventRefreshAcc >= 60)
 		{
 			m_EventRefreshAcc = 0;
@@ -759,31 +758,20 @@ class DZMB_Bridge
 		array<CargoBase> cargo = new array<CargoBase>;
 		m_ScanStarted = GetGame().GetTime();
 		GetGame().GetObjectsAtPosition3D("7680 0 7680", 12000, m_ScanObjects, cargo);
-		// Tracked items already sitting inside containers are found through the cargo list.
-		if (DZMB_Config.Get().rare_items.Count() > 0)
-		{
-			foreach (CargoBase c : cargo)
-			{
-				if (!c)
-					continue;
-				for (int ci = 0; ci < c.GetItemCount(); ci++)
-				{
-					EntityAI inCargo = c.GetItem(ci);
-					if (inCargo && IsDZMBTrackedEntity(inCargo))
-						m_ScanObjects.Insert(inCargo);
-				}
-			}
-		}
+		DZMB_Log.Info("tracking census started: " + m_ScanObjects.Count().ToString() + " world objects");
 		m_ScanIndex = 0;
 		m_ScanEvents = 0;
 		m_ScanItems = 0;
 	}
 
+	// Called every server frame (not on the 1 s bridge tick): Chernarus has over a
+	// million objects, so 250 per second took more than an hour after each restart
+	// and items loaded from storage stayed off the map until then.
 	void ContinueTrackingScan()
 	{
 		if (!m_ScanObjects) return;
 		// Process one census incrementally; never query the world on every frame.
-		int until = Math.Min(m_ScanIndex + 250, m_ScanObjects.Count());
+		int until = Math.Min(m_ScanIndex + 1500, m_ScanObjects.Count());
 		while (m_ScanIndex < until)
 		{
 			EntityAI entity = EntityAI.Cast(m_ScanObjects[m_ScanIndex]);
@@ -808,19 +796,11 @@ class DZMB_Bridge
 
 	void OnEntitySpawned(EntityAI e)
 	{
-		if (!e || e.IsHologram()) { if (e) OnEntityDeleted(e); return; }
+		// Ground only: anything inside a container, a vehicle or a player's inventory
+		// is not on the map (base containers are excluded from ground-item tracking).
+		if (!e || e.IsHologram() || e.GetHierarchyParent()) { if (e) OnEntityDeleted(e); return; }
 		string kind = "item";
 		if (GetGame().ConfigIsExisting("CfgWeapons " + e.GetType())) kind = "weapon";
-		if (e.GetHierarchyParent())
-		{
-			// Tracked items inside a container (stash, crate, PC, tent…) are shown at
-			// the container, but never while a player carries them.
-			if (!IsDZMBTrackedEntity(e) || e.GetHierarchyRootPlayer()) { OnEntityDeleted(e); return; }
-			EntityAI root = e.GetHierarchyRoot();
-			if (!root) { OnEntityDeleted(e); return; }
-			EmitMarkerAt(e, root.GetPosition(), "tracked_item", e.GetType(), kind, "", 0, root.GetType());
-			return;
-		}
 		string cat;
 		if (IsDZMBTrackedEntity(e)) cat = "tracked_item";
 		else if (!EventCategory(e, cat)) { OnEntityDeleted(e); return; }

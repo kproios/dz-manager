@@ -5,7 +5,7 @@ import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, P
 import { Icon } from '../icons'
 import { ago } from '../util'
 import { useNotify } from '../App'
-import { AutoMessages, BotApi, DiscordChannels, HostControl, PlayerChecks, Retention, VehicleIcons } from './SettingsExtra'
+import { AutoMessages, BotApi, DiscordChannels, PlayerChecks, Retention, VehicleIcons } from './SettingsExtra'
 import { usePref } from '../prefs'
 import { IconName } from '../icons'
 
@@ -31,7 +31,7 @@ function problems(e: Edit): Partial<Record<keyof Edit, string>> {
 
 type SettingsTab = 'server' | 'players' | 'map' | 'messages' | 'integrations' | 'data'
 const TABS: [SettingsTab, string, IconName, string][] = [
-  ['server', 'Server', 'power', 'Game servers, bridge, emergency stop'],
+  ['server', 'Server', 'power', 'Game servers and bridge'],
   ['players', 'Players', 'players', 'Player checks and priority queue'],
   ['map', 'Map & tracking', 'map', 'Tracked events, items and vehicle icons'],
   ['messages', 'Messages', 'megaphone', 'Welcome and rotating messages'],
@@ -129,7 +129,6 @@ export default function Settings() {
           </dl>
         ) : <p className="muted">Download DZMBridge.zip from the latest GitHub release, install it as a server mod and paste the config from “Connect…”. The game-side PBO is not auto-updated: compare the installed version after each release.</p>}
       </Card>
-      <HostControl />
       </>}
       {tab === 'players' && <><PlayerChecks /><PriorityQueue /></>}
       {tab === 'map' && <><Tracking invalid={b?.info?.tracking_invalid || []} /><VehicleIcons /></>}

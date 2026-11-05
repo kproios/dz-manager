@@ -14,10 +14,13 @@ modded class MissionServer
 	override void OnUpdate(float timeslice)
 	{
 		super.OnUpdate(timeslice);
+		DZMB_Bridge b = DZMB_Bridge.Get();
+		// The world census runs in small slices every frame; everything else once a second.
+		if (b)
+			b.ContinueTrackingScan();
 		m_DZMB_Acc += timeslice;
 		if (m_DZMB_Acc < 1.0)
 			return;
-		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (b)
 			b.OnUpdate(m_DZMB_Acc);
 		m_DZMB_Acc = 0;
