@@ -78,6 +78,7 @@ func (s *Service) Attach(b *bridge.Bridge) {
 }
 
 type deathData struct {
+	Killer    string   `json:"killer"`
 	Weapon    string   `json:"weapon"`
 	Cause     string   `json:"cause"`
 	Distance  float64  `json:"distance_m"`
@@ -110,10 +111,17 @@ func (s *Service) onDeath(ctx context.Context, ev bridge.Event) {
 	victim := s.playerName(ctx, ev.Actor)
 	label := victim + " died"
 	extra := map[string]any{"victim": ev.Actor, "victim_name": victim, "weapon": trunc(d.Weapon), "cause": trunc(d.Cause)}
-	if ev.Target != "" {
-		killer := s.playerName(ctx, ev.Target)
+	killerID := ev.Target
+	if killerID == "" {
+		killerID = d.Killer
+	}
+	if killerID == ev.Actor {
+		killerID = "" // suicide
+	}
+	if killerID != "" {
+		killer := s.playerName(ctx, killerID)
 		label = victim + " killed by " + killer
-		extra["killer"], extra["killer_name"], extra["distance_m"] = ev.Target, killer, d.Distance
+		extra["killer"], extra["killer_name"], extra["distance_m"] = killerID, killer, d.Distance
 		if d.KillerPos != nil {
 			extra["killer_pos"] = d.KillerPos
 		}
