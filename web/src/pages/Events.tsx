@@ -12,11 +12,11 @@ interface Event { id: number; ts: string; type: string; actor: string; actor_nam
 // World-event categories as the map draws them.
 const CATS: [string, MapIcon, string][] = [
   ['heli_crash', 'heli', 'Helicrash'], ['plane_crash', 'plane', 'Aircraft crash'], ['military_convoy', 'convoy', 'Convoy'], ['police', 'police', 'Police'],
-  ['train', 'train', 'Train'], ['airdrop', 'airdrop', 'Airdrop'], ['loot_box', 'item', 'Loot box'], ['base_flag', 'flag', 'Base flag'],
+  ['train', 'train', 'Train'], ['airdrop', 'airdrop', 'Airdrop'], ['loot_box', 'item', 'Loot box'], ['base_flag', 'flag', 'Base flag'], ['raid', 'raid', 'Raid'],
   ['tracked_item', 'item', 'Tracked item'], ['rare_item', 'item', 'Item spawn'], ['custom', 'item', 'Other'],
 ]
 // Activity types with an icon each.
-const TYPES: [string, IconName][] = [['player.connect', 'kick'], ['player.disconnect', 'kick'], ['player.death', 'skull'], ['event.start', 'events'], ['event.end', 'events'], ['item.spawn', 'gift'], ['item.observed', 'gift'], ['server.start', 'power']]
+const TYPES: [string, IconName][] = [['player.connect', 'kick'], ['player.disconnect', 'kick'], ['player.death', 'skull'], ['raid.hit', 'shield'], ['raid.destroyed', 'shield'], ['raid.codelock', 'lock'], ['event.start', 'events'], ['event.end', 'events'], ['item.spawn', 'gift'], ['item.observed', 'gift'], ['server.start', 'power']]
 type Order = 'desc' | 'asc'
 
 export default function Events() {

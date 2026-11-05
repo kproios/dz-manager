@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -22,7 +23,10 @@ import (
 )
 
 // Categories.
-var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag"}
+var Categories = []string{"heli_crash", "plane_crash", "airdrop", "loot_box", "military_convoy", "police", "train", "custom", "rare_item", "tracked_item", "base_flag", "raid"}
+
+// raidTTL keeps a raid marker on the map after the last hit.
+const raidTTL = 30 * time.Minute
 
 const (
 	defaultTTL   = 3 * time.Hour // fallback end when a despawn is never reported
@@ -66,6 +70,28 @@ func (s *Service) Attach(b *bridge.Bridge) {
 	b.Subscribe(s.onEnd, "event.end")
 	b.Subscribe(s.onItem, "item.spawn", "item.observed")
 	b.Subscribe(s.onServerStart, "server.start")
+	b.Subscribe(s.onRaid, "raid.hit", "raid.destroyed", "raid.codelock")
+}
+
+type raidData struct {
+	Class  string `json:"class"`
+	Part   string `json:"part"`
+	Detail string `json:"detail"`
+}
+
+// onRaid turns raid activity into one active map marker per ~30 m area that
+// stays for 30 minutes after the last hit (the activity row itself is durable).
+func (s *Service) onRaid(ctx context.Context, ev bridge.Event) {
+	var d raidData
+	_ = json.Unmarshal(ev.Data, &d)
+	if ev.Pos == nil {
+		return
+	}
+	label := map[string]string{"raid.hit": "Base under attack", "raid.destroyed": "Base part destroyed", "raid.codelock": "Code lock raided"}[ev.Type]
+	key := fmt.Sprintf("raid:%s:%d:%d", ev.ServerID, int(ev.Pos.X/30), int(ev.Pos.Z/30))
+	data, _ := json.Marshal(map[string]any{"key": key, "category": "raid", "class": trunc(d.Class), "ttl_s": int(raidTTL.Seconds()), "name": label, "kind": ev.Type, "part": trunc(d.Part), "detail": trunc(d.Detail)})
+	ev.Data = data
+	s.onStart(ctx, ev)
 }
 
 type startData struct {

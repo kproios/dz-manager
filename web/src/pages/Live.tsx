@@ -15,7 +15,7 @@ import { ServerControls } from './Restarts'
 import { kd } from './Players'
 
 interface Ev { id: number; ts: string; type: string; actor: string; actor_name: string; data: Record<string, unknown> }
-type FeedKind = 'chat' | 'join' | 'death'
+type FeedKind = 'chat' | 'join' | 'death' | 'raid'
 
 /** Live server view: players and map side by side with a message box and live feed. */
 export default function Live({ tab: initial }: { tab?: string }) {
@@ -113,16 +113,16 @@ function Online({ status, map, onShow }: { status?: ServerStatus | null; map?: M
   )
 }
 
-const FEED_KINDS: [FeedKind, string][] = [['chat', 'Chat'], ['join', 'Joins & leaves'], ['death', 'Deaths']]
+const FEED_KINDS: [FeedKind, string][] = [['chat', 'Chat'], ['join', 'Joins & leaves'], ['death', 'Deaths'], ['raid', 'Raids']]
 
 function Side({ status }: { status?: ServerStatus | null }) {
   const notify = useNotify()
   const [msg, setMsg] = useState('')
   const [to, setTo] = useState('')
   const [busy, setBusy] = useState(false)
-  const [kinds, setKinds] = usePref<FeedKind[]>('live.feed', ['chat', 'join', 'death'])
+  const [kinds, setKinds] = usePref<FeedKind[]>('live.feed', ['chat', 'join', 'death', 'raid'])
   const chat = useApi<ChatMessage[]>('/api/chat?limit=80', ['chat'])
-  const evs = useApi<{ items: Ev[] }>('/api/events?limit=80&types=player.connect,player.disconnect,player.death', ['events'])
+  const evs = useApi<{ items: Ev[] }>('/api/events?limit=80&types=player.connect,player.disconnect,player.death,raid.hit,raid.destroyed,raid.codelock', ['events'])
   const players = status?.players ?? []
   const rconOk = status?.rcon.state === 'ok'
   const send = async () => {
@@ -141,6 +141,11 @@ function Side({ status }: { status?: ServerStatus | null }) {
       const name = e.actor_name || e.actor
       if (e.type === 'player.connect') out.push({ key: 'e' + e.id, ts: e.ts, kind: 'join', who: name, steam: e.actor, text: 'joined', cls: 'join' })
       else if (e.type === 'player.disconnect') out.push({ key: 'e' + e.id, ts: e.ts, kind: 'join', who: name, steam: e.actor, text: 'left', cls: 'leave' })
+      else if (e.type.startsWith('raid.')) {
+        const what = typeof e.data?.class === 'string' ? e.data.class : 'a base'
+        const verb = e.type === 'raid.destroyed' ? 'destroyed part of' : e.type === 'raid.codelock' ? 'raided a code lock on' : 'is attacking'
+        out.push({ key: 'e' + e.id, ts: e.ts, kind: 'raid', who: name || 'Someone', steam: e.actor || undefined, text: verb + ' ' + what, cls: 'raid' })
+      }
       else if (e.type === 'player.death') {
         const byPlayer = typeof e.data?.killer === 'string' && e.data.killer !== ''
         const weapon = typeof e.data?.weapon === 'string' ? e.data.weapon : ''

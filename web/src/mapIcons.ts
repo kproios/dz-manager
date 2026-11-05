@@ -1,6 +1,6 @@
 import type { Marker, MzVehicle } from './api'
 
-export type MapIcon = 'heli'|'plane'|'convoy'|'police'|'car'|'bike'|'boat'|'item'|'weapon'|'flag'|'airdrop'|'train'
+export type MapIcon = 'heli'|'plane'|'convoy'|'police'|'car'|'bike'|'boat'|'item'|'weapon'|'flag'|'airdrop'|'train'|'raid'
 // Original, fixed SVG paths. Server-provided names are never interpolated into HTML.
 const paths:Record<MapIcon,string>={
  heli:'<path d="M3 3h16M11 3v4M5 9h10l4 5v3H8l-3-4H2V9h3ZM11 9v5h7M8 17v3m8-3v3M6 20h13M20 6v7m-2-5 4 3"/>',
@@ -15,8 +15,9 @@ const paths:Record<MapIcon,string>={
  flag:'<path d="M5 23V2m0 1c5-4 9 4 15 0v10c-6 4-10-4-15 0M2 23h7"/>',
  airdrop:'<path d="M2 10a10 10 0 0 1 20 0H2Zm0 0 7 7m13-7-7 7M8 10l2 7m6-7-2 7M8 17h8v6H8Z"/>',
  train:'<path d="M5 3h14v14H5ZM5 10h14M9 3v7m6-7v7M7 17l-3 6m13-6 3 6M5 21h14"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>',
+ raid:'<path d="m12 2 2 5 5-3-2 6 5 1-5 3 3 5-6-2-2 5-2-5-6 2 3-5-5-3 5-1-2-6 5 3 2-5Z"/>',
 }
-export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train'}
+export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft crash',convoy:'Convoy',police:'Police',car:'Car',bike:'Bike',boat:'Boat',item:'Item',weapon:'Weapon',flag:'Base flag',airdrop:'Airdrop',train:'Train',raid:'Raid'}
 export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
 export interface VehicleRule { match:string; kind:MapIcon }
 export const vehicleKinds:MapIcon[]=['car','bike','boat','heli','convoy','plane','police','train']
@@ -32,7 +33,7 @@ export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>,rules:VehicleRule[]
  return 'car'
 }
 export function markerIcon(m:Pick<Marker,'category'|'kind'>):MapIcon {
- const category:Record<string,MapIcon>={heli_crash:'heli',plane_crash:'plane',military_convoy:'convoy',police:'police',train:'train',airdrop:'airdrop',loot_box:'item',base_flag:'flag'}
+ const category:Record<string,MapIcon>={heli_crash:'heli',plane_crash:'plane',military_convoy:'convoy',police:'police',train:'train',airdrop:'airdrop',loot_box:'item',base_flag:'flag',raid:'raid'}
  return category[m.category] || (m.kind==='weapon'?'weapon':'item')
 }
 export function markerTitle(m:Pick<Marker,'name'|'class'|'category'>):string {return m.name?.trim() || m.class || m.category.replaceAll('_',' ')}

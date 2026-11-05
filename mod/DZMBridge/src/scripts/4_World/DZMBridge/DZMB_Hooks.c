@@ -162,6 +162,31 @@ modded class House
 	}
 }
 
+// Raids: vanilla base building and every mod built on BaseBuildingBase
+// (for example Building Fortifications barricades).
+modded class BaseBuildingBase
+{
+	override void EEHitBy(TotalDamageResult damageResult, int damageType, EntityAI source, int component, string dmgZone, string ammo, vector modelPos, float speedCoef)
+	{
+		super.EEHitBy(damageResult, damageType, source, component, dmgZone, ammo, modelPos, speedCoef);
+		if (!GetGame().IsDedicatedServer())
+			return;
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge)
+			bridge.OnRaidHit(this, source, dmgZone, ammo);
+	}
+
+	override void OnPartDestroyedServer(Man player, string part_name, int action_id, bool destroyed_by_connected_part = false)
+	{
+		super.OnPartDestroyedServer(player, part_name, action_id, destroyed_by_connected_part);
+		if (destroyed_by_connected_part || !GetGame().IsDedicatedServer())
+			return;
+		DZMB_Bridge bridge = DZMB_Bridge.Get();
+		if (bridge)
+			bridge.OnRaidDestroyed(this, player, part_name);
+	}
+}
+
 // Weapons do not inherit the script-level ItemBase.
 modded class Weapon_Base
 {
