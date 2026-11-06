@@ -14,7 +14,7 @@ function emit(name: string, data: any) { listeners.forEach((l) => l(name, data))
 function ensureStream() {
   if (source || typeof EventSource === 'undefined') return
   source = new EventSource('/api/stream')
-  const names = ['server_status', 'capabilities', 'map', 'map_events', 'events', 'restarts', 'profiles', 'intel', 'chat']
+  const names = ['server_status', 'capabilities', 'map', 'live', 'map_events', 'events', 'restarts', 'profiles', 'intel', 'chat', 'prefs']
   for (const n of names) {
     source.addEventListener(n, (e) => {
       let data: any = null
@@ -34,6 +34,13 @@ function ensureStream() {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') emit(RESYNC, null) })
     window.addEventListener('online', () => emit(RESYNC, null))
   }
+}
+
+/** Subscribe outside React (module-level stores). Returns the unsubscribe function. */
+export function onStream(fn: Listener): () => void {
+  ensureStream()
+  listeners.add(fn)
+  return () => { listeners.delete(fn) }
 }
 
 /** Subscribe to server-sent events. */

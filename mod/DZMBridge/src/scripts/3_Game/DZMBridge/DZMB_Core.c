@@ -2,7 +2,7 @@
 // HTTP wrapper adapted from DayZ-Takaro-Integration (MIT). DayZ RestContext
 // cannot send custom headers reliably, so the server token travels in the URL path.
 
-const string DZMB_VERSION = "0.1.10";
+const string DZMB_VERSION = "0.1.11";
 const string DZMB_DIR = "$profile:DZMBridge";
 const string DZMB_CONFIG = "$profile:DZMBridge/config.json";
 
@@ -16,6 +16,7 @@ class DZMB_ConfigData
 	int event_flush_seconds = 5;
 	int command_poll_seconds = 3;
 	int heartbeat_seconds = 30;
+	int live_seconds = 2;
 	int max_queue = 500;
 	string log_level = "info";
 	ref map<string, string> event_classes = new map<string, string>;
@@ -54,6 +55,7 @@ class DZMB_Config
 		if (s_Data.event_flush_seconds < 1) s_Data.event_flush_seconds = 5;
 		if (s_Data.command_poll_seconds < 1) s_Data.command_poll_seconds = 3;
 		if (s_Data.heartbeat_seconds < 5) s_Data.heartbeat_seconds = 30;
+		if (s_Data.live_seconds < 1) s_Data.live_seconds = 2;
 		if (s_Data.max_queue < 10) s_Data.max_queue = 500;
 	}
 

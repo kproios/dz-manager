@@ -23,16 +23,40 @@ export const iconLabels:Record<MapIcon,string>={heli:'Helicrash',plane:'Aircraft
 export function iconSvg(kind:MapIcon):string {return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]}</svg>`}
 export interface VehicleRule { match:string; kind:MapIcon }
 export const vehicleKinds:MapIcon[]=['car','truck','bike','boat','heli','plane','police','train']
-/** Owner rules (classname contains `match`, case-insensitive) win over the built-in guesses. */
+export function ruleMatches(rule:Pick<VehicleRule,'match'>,cls:string):boolean {return !!rule.match.trim()&&(cls||'').toLowerCase().includes(rule.match.trim().toLowerCase())}
+/** Owner rules (classname contains `match`, case-insensitive) win over the built-in guesses.
+ * The longest matching rule wins, so `Boat_01_Black` beats `Boat_01` whatever the order they were added in. */
 export function vehicleIcon(v:Pick<MzVehicle,'class'|'type'>,rules:VehicleRule[]=[]):MapIcon {
- const cls=(v.class||'').toLowerCase()
- for(const r of rules) if(r.match&&cls.includes(r.match.toLowerCase())&&vehicleKinds.includes(r.kind))return r.kind
+ let best:VehicleRule|undefined
+ for(const r of rules) if(ruleMatches(r,v.class)&&vehicleKinds.includes(r.kind)&&(!best||r.match.trim().length>best.match.trim().length))best=r
+ if(best)return best.kind
  const type=((v.type||'')+' '+v.class).toLowerCase()
  if(/motorbike|motorcycle|bicycle|bike|moped|scooter|quad|atv|dirtbike/.test(type))return 'bike'
  if(/boat|zodiac|jetski|rhib|kayak|raft|ship|watercraft/.test(type))return 'boat'
  if(/helicopter|heli/.test(type))return 'heli'
  if(/truck|v3s|ural|bus/.test(type))return 'truck'
  return 'car'
+}
+// Vanilla vehicle families, so a typo is caught even when none is on the map right now.
+const KNOWN_VEHICLES=['Boat_01','Motorbike_01','Motorbike_02','OffroadHatchback','Hatchback_02','Sedan_02','CivilianSedan','Offroad_02','Truck_01']
+function editDistance(a:string,b:string):number {
+ let row=Array.from({length:b.length+1},(_,i)=>i)
+ for(let i=1;i<=a.length;i++){const next=[i];for(let j=1;j<=b.length;j++)next[j]=Math.min(next[j-1]+1,row[j]+1,row[j-1]+(a[i-1]===b[j-1]?0:1));row=next}
+ return row[b.length]
+}
+/** The class a mistyped rule probably meant ("Motorbikes_01" → "Motorbike_01"), if any. */
+export function closestVehicle(text:string,classes:string[]):string|undefined {
+ const q=text.trim().toLowerCase()
+ if(q.length<3)return undefined
+ const limit=Math.max(1,Math.floor(q.length/4))
+ let best:string|undefined,bestScore=limit+1
+ for(const c of [...classes,...KNOWN_VEHICLES]){
+  const l=c.toLowerCase()
+  if(l.includes(q))continue
+  const score=Math.min(editDistance(q,l),editDistance(q,l.slice(0,q.length)))
+  if(score<bestScore){best=c;bestScore=score}
+ }
+ return best
 }
 export function markerIcon(m:Pick<Marker,'category'|'kind'>):MapIcon {
  const category:Record<string,MapIcon>={heli_crash:'heli',plane_crash:'plane',military_convoy:'convoy',police:'police',train:'train',airdrop:'airdrop',loot_box:'item',base_flag:'flag',raid:'raid',death:'death'}

@@ -11,7 +11,7 @@ import (
 // UI preferences (map layers, hidden icon kinds, table sizes) are stored per
 // account identity in the settings table, so they follow the owner across
 // browsers, sign-outs and PCs. They are cosmetic: never secrets, never audited.
-const maxPrefs = 8 << 10
+const maxPrefs = 64 << 10 // 100 vehicle rules alone can exceed 8 KiB, and then nothing saved
 
 func prefsKey(u *auth.User) string { return "ui_prefs:" + u.Sub }
 
@@ -50,5 +50,7 @@ func (s *Server) putPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, 500, "could not save preferences")
 		return
 	}
+	// A rule added on the phone must change the map already open on the PC.
+	s.Hub.Publish("prefs", map[string]bool{"changed": true})
 	httpx.JSON(w, 200, in)
 }

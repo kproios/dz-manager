@@ -3,9 +3,9 @@ import { api, Flags, Intel, MapState, Marker, PlayerProfile } from '../api'
 import { Avatar, Flag, RiskBadges, RiskIcon } from '../intel'
 import { useApi } from '../hooks'
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, Pager, Seg, StatTile, steamUrl, Trunc, usePaged } from '../ui'
-import { ago, fmtDuration, fmtTime } from '../util'
+import { ago, fmtDuration, fmtTime, grid } from '../util'
 import { useNotify } from '../App'
-import { eventDests, PlayerActions } from '../playerActions'
+import { eventDests, PlayerActions, TeleportButton } from '../playerActions'
 import { Bars } from '../charts'
 import { Icon } from '../icons'
 import { LogDetails, readable } from '../logs'
@@ -151,7 +151,7 @@ function Combat({ combat }: { combat: PlayerProfile['combat'] }) {
     <Card title="Kills & deaths" actions={<Seg label="Filter" value={f} onChange={(v) => { setF(v); pg.setPage(1) }} options={[['all', 'All'], ['kill', 'Kills'], ['death', 'Deaths']]} />}>
       {!rows.length ? <Empty>No {f === 'all' ? 'kills or deaths' : f + 's'} recorded.</Empty> : <>
         <div className="table-scroll"><table>
-          <thead><tr><th>When</th><th>What happened</th><th>Weapon</th><th className="num">Distance</th></tr></thead>
+          <thead><tr><th>When</th><th>What happened</th><th>Weapon</th><th className="num">Distance</th><th title="Where the victim fell" /></tr></thead>
           <tbody>
             {pg.rows.map((c, i) => (
               <tr key={i}>
@@ -162,6 +162,7 @@ function Combat({ combat }: { combat: PlayerProfile['combat'] }) {
                     : <><Badge state="bad">death</Badge> <span className="muted">{c.cause ? readable(c.cause) : 'environment / unknown'}</span></>}</td>
                 <td><Trunc text={c.weapon} max={180} /></td>
                 <td className="num">{c.distance_m != null ? c.distance_m.toFixed(0) + ' m' : '—'}</td>
+                <td>{c.x != null && c.z != null && <TeleportButton x={c.x} z={c.z} label={`the body (${grid(c.x, c.z)})`} death />}</td>
               </tr>
             ))}
           </tbody>

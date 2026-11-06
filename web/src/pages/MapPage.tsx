@@ -1,21 +1,28 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { MapState, Marker, MzPlayer, MzVehicle, PlayerProfile } from '../api'
-import { useApi } from '../hooks'
+import { api, Marker, MzPlayer, MzVehicle, PlayerProfile } from '../api'
+import { useApi, useNow } from '../hooks'
 import { Badge, Confirm, CopyButton, Meter, Seg, steamUrl } from '../ui'
 import { Icon } from '../icons'
 import { ago, fromLatLng, grid, pct, toLatLng, TILE, WORLD } from '../util'
-import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
+import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, ruleMatches, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
 import { usePref } from '../prefs'
-import { besides, eventDests, PlayerActions, Target, useRunAction } from '../playerActions'
+import { besides, eventDests, PlayerActions, Target, TpHere, useRunAction } from '../playerActions'
+import { isFresh, useLiveMap } from '../liveMap'
+import { MarkerStore, SyncItem, syncMarkers } from '../mapSync'
 
 const TILE_URL = '/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp'
-type Sel = { kind: 'player'; id: string } | { kind: 'vehicle'; v: MzVehicle } | { kind: 'event'; m: Marker; members: Marker[] } | null
+// What is selected is remembered by id and looked up in the latest data on every
+// update, so the details panel can never show an old position or status. `last` is
+// the final known copy, kept for something that has since left the map.
+type Sel = { kind: 'player'; id: string } | { kind: 'vehicle'; id: string; last: MzVehicle } | { kind: 'event'; key: string; last: Marker; members: Marker[] } | null
+type Shown = { kind: 'player'; id: string } | { kind: 'vehicle'; v: MzVehicle; gone: boolean } | { kind: 'event'; m: Marker; members: Marker[] }
 type Layers = { players: boolean; vehicles: boolean; events: boolean; items: boolean; bases: boolean; deaths: boolean; ended: boolean }
 const defaultLayers: Layers = { players: true, vehicles: true, events: true, items: true, bases: true, deaths: true, ended: false }
 const layerNames: [keyof Layers, string][] = [['players', 'Players'], ['vehicles', 'Vehicles'], ['events', 'Events'], ['items', 'Items'], ['bases', 'Bases'], ['deaths', 'Deaths & raids'], ['ended', 'History']]
 const HISTORY: [number, string][] = [[1, '1 h'], [6, '6 h'], [24, '24 h'], [72, '3 days'], [168, '7 days']]
 type PendingTp = { target: Target; x: number; z: number; label: string }
+type Found = { key: string; label: string; sub: string; kind: MapIcon | 'player'; go: () => void }
 
 function tooltip(text: string) { const node = document.createElement('span'); node.textContent = text; return node }
 function entityIcon(kind: MapIcon, muted = false, count = 1) {
@@ -27,18 +34,23 @@ function playerIcon(stale: boolean, selected: boolean) {
 const clampWorld = (v: number) => Math.max(1, Math.min(WORLD - 1, v))
 /** MetricZ reports some stats as 0..1 fractions and others as raw DayZ values. */
 const frac = (v: number | undefined, max: number) => v == null || !isFinite(v) ? null : Math.max(0, Math.min(1, v <= 1.0001 ? v : v / max))
+const createMarker = (item: SyncItem) => L.marker(item.latlng, { icon: item.icon(), title: item.title, alt: item.title, keyboard: true, zIndexOffset: item.zIndexOffset ?? 0 })
 
-export default function MapPage({ focusId, focusKey }: { focusId?: string; focusKey?: string } = {}) {
-  const state = useApi<MapState>('/api/map/state', ['map'], 15000)
+export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: string; focusKey?: string; focusClass?: string } = {}) {
+  const state = useLiveMap()
+  const now = useNow(1000)
   const [storedLayersEarly] = usePref<Layers>('map.layers', defaultLayers)
   const historyOn = { ...defaultLayers, ...storedLayersEarly }.ended
   const [histHours, setHistHours] = usePref('map.historyHours', 6)
   const [histPos, setHistPos] = useState(100) // timeline position, % of the range (100 = now)
-  const events = useApi<Marker[]>('/api/map/events?history_hours=' + (historyOn ? histHours : focusKey ? 24 : 2), ['map_events'], 30000)
+  // Changes arrive over the stream at once; the poll is only a safety net.
+  const events = useApi<Marker[]>('/api/map/events?history_hours=' + (historyOn ? histHours : 2), ['map_events'], 30000)
   const el = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
   const layers = useRef<Record<string, L.LayerGroup>>({})
   const playerMarkers = useRef(new Map<string, L.Marker>())
+  const vehicleMarkers = useRef<MarkerStore>(new Map())
+  const eventMarkers = useRef<MarkerStore>(new Map())
   const frozen = useRef<string | null>(null) // player being dragged / awaiting confirmation
   const [sel, setSel] = useState<Sel>(null)
   const [labels, setLabels] = usePref('map.labels', true)
@@ -53,6 +65,9 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
   const [pending, setPending] = useState<PendingTp | null>(null)
   const [tpBusy, setTpBusy] = useState(false)
   const [redraw, setRedraw] = useState(0)
+  const [query, setQuery] = useState('')
+  const [notice, setNotice] = useState('')
+  const [focusMarker, setFocusMarker] = useState<Marker | null>(null)
   const runAction = useRunAction()
   const pickRef = useRef<Target | null>(null)
   pickRef.current = pick
@@ -84,11 +99,13 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
     img.onload = () => setTilesOk(true)
     img.onerror = () => setTilesOk(false)
     img.src = TILE_URL.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0')
-    return () => { m.remove(); map.current = null; layers.current = {}; playerMarkers.current.clear() }
+    return () => { m.remove(); map.current = null; layers.current = {}; playerMarkers.current.clear(); vehicleMarkers.current.clear(); eventMarkers.current.clear() }
   }, [])
 
   const data = state.data
+  const fresh = isFresh(data, state.lastUpdate.current, now)
   const players = data?.available ? data.players ?? [] : []
+  const vehicles = data?.available ? data.vehicles ?? [] : []
   // Opened from the Live players list: select that player and centre the map once.
   const focused = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -105,7 +122,7 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
     const g = layers.current.players
     if (!g) return
     const known = playerMarkers.current
-    const stale = !data?.fresh
+    const stale = !fresh
     const wanted = new Set<string>()
     if (show.players) for (const p of players) {
       wanted.add(p.steam64)
@@ -138,29 +155,38 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
       }
       ;(mk as L.Marker & { dzm?: MzPlayer }).dzm = p
       if (frozen.current === p.steam64) continue
+      // Rebinding on every push would close a tooltip being read.
+      const tip = `${p.name || p.steam64}/${labels}`
+      const tipTagged = mk as L.Marker & { dzmTip?: string }
+      if (tipTagged.dzmTip === tip) continue
+      tipTagged.dzmTip = tip
       mk.unbindTooltip()
       if (labels) mk.bindTooltip(tooltip(p.name || p.steam64), { permanent: true, direction: 'right', className: 'lbl', pane: 'tooltipPane' })
       else mk.bindTooltip(tooltip(p.name || p.steam64), { direction: 'top' })
     }
     for (const [id, mk] of known) if (!wanted.has(id) && frozen.current !== id) { mk.remove(); known.delete(id) }
-  }, [data, labels, show.players, sel, redraw])
+  }, [data, fresh, labels, show.players, sel, redraw])
 
   useEffect(() => {
     const g = layers.current.vehicles
     if (!g) return
-    g.clearLayers()
-    if (!data?.available || !show.vehicles) return
-    for (const v of data.vehicles ?? []) {
+    const items: SyncItem[] = []
+    if (show.vehicles) for (const v of vehicles) {
       const kind = vehicleIcon(v, vehicleRules)
-      if (hidden.has(kind)) continue
-      const mk = L.marker(toLatLng(v.x, v.z), { icon: entityIcon(kind, !data.fresh), title: v.class, alt: v.class, keyboard: true })
-      mk.bindTooltip(tooltip(v.class), { direction: 'top' })
-      mk.on('click', () => setSel({ kind: 'vehicle', v }))
-      mk.addTo(g)
+      const selected = sel?.kind === 'vehicle' && sel.id === v.id
+      if (hidden.has(kind) && !selected) continue
+      const muted = !fresh || v.health === 0
+      items.push({ key: v.id, latlng: toLatLng(v.x, v.z), look: `${kind}/${muted}`, icon: () => entityIcon(kind, muted), title: v.class, tooltip: () => tooltip(v.class), tip: v.class, tipOptions: { direction: 'top' }, group: g,
+        onClick: () => setSel({ kind: 'vehicle', id: v.id, last: v }) })
     }
-  }, [data, show.vehicles, hidden, vehicleRules])
+    syncMarkers(vehicleMarkers.current, items, createMarker)
+  }, [data, fresh, show.vehicles, hidden, vehicleRules, sel])
 
-  const sites = useMemo(() => groupMarkers(events.data ?? []), [events.data])
+  const allMarkers = useMemo(() => {
+    const list = events.data ?? []
+    return focusMarker && !list.some((m) => m.key === focusMarker.key) ? [...list, focusMarker] : list
+  }, [events.data, focusMarker])
+  const sites = useMemo(() => groupMarkers(allMarkers), [allMarkers])
   // Which layer a marker belongs to, so the draw loop and the "hidden" notice agree.
   const markerLayer = (m: Marker) => {
     const kind = markerIcon(m)
@@ -177,15 +203,17 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
   const nowMinute = Math.floor(Date.now() / 60000) * 60000 // stable between renders (cursor moves re-render often)
   const sliceEnd = nowMinute - Math.round((1 - histPos / 100) * range)
   const sliceStart = sliceEnd - sliceLen
+  const selKey = sel?.kind === 'event' ? sel.key : undefined
   useEffect(() => {
     const groups = layers.current
     if (!groups.events) return
-    for (const name of ['events', 'items', 'bases']) groups[name].clearLayers()
+    const items: SyncItem[] = []
     for (const site of sites) {
       const m = site.marker
       const { kind, item, base, hiddenBy } = markerLayer(m)
-      const focusedOne = !!focusKey && m.key === focusKey
-      if (!focusedOne) {
+      // What is selected stays on the map after it ends, so you can still see where it was.
+      const keep = site.members.some((x) => x.key === focusKey || x.key === selKey)
+      if (!keep) {
         if (hiddenBy) continue
         if (m.status !== 'active') {
           if (!show.ended) continue
@@ -195,41 +223,72 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
       }
       const live = m.status === 'active'
       const title = site.members.length > 1 ? `${iconLabels[kind]} · ${site.members.length} objects` : markerTitle(m)
-      const g = groups[item ? 'items' : base ? 'bases' : 'events']
-      const mk = L.marker(toLatLng(m.x, m.z), { icon: entityIcon(kind, !live, site.members.length), title, alt: title, keyboard: true, zIndexOffset: live ? 100 : 0 })
-      mk.bindTooltip(tooltip(title), { direction: 'top', permanent: labels && (item || base), className: 'lbl' })
-      mk.on('click', () => setSel({ kind: 'event', m, members: site.members }))
-      mk.addTo(g)
+      const permanent = labels && (item || base)
+      items.push({ key: m.key, latlng: toLatLng(m.x, m.z), look: `${kind}/${live}/${site.members.length}`, icon: () => entityIcon(kind, !live, site.members.length), title, tooltip: () => tooltip(title), tip: `${title}/${permanent}`,
+        tipOptions: { direction: 'top', permanent, className: 'lbl' }, zIndexOffset: live ? 100 : 0, group: groups[item ? 'items' : base ? 'bases' : 'events'],
+        onClick: () => setSel({ kind: 'event', key: m.key, last: m, members: site.members }) })
     }
-  }, [sites, show.events, show.ended, show.items, show.bases, show.deaths, labels, hidden, focusKey, sliceStart, sliceEnd])
+    syncMarkers(eventMarkers.current, items, createMarker)
+  }, [sites, show.events, show.ended, show.items, show.bases, show.deaths, labels, hidden, focusKey, selKey, sliceStart, sliceEnd])
 
-  // Opened from a death in the Live feed: select it and centre the map once.
+  // Opened from the live feed or the event log: select it and centre the map once.
+  // Anything too old for the map's history list is fetched by key.
   const focusedKey = useRef<string | undefined>(undefined)
   useEffect(() => {
-    const m = focusKey ? (events.data ?? []).find((x) => x.key === focusKey) : undefined
-    if (!m || !map.current || focusedKey.current === focusKey) return
+    if (!focusKey || focusedKey.current === focusKey || !events.data) return
+    const select = (m: Marker) => {
+      focusedKey.current = focusKey
+      setSel({ kind: 'event', key: m.key, last: m, members: [m] })
+      map.current?.setView(toLatLng(m.x, m.z), 5)
+    }
+    const m = events.data.find((x) => x.key === focusKey)
+    if (m) { select(m); return }
     focusedKey.current = focusKey
-    setSel({ kind: 'event', m, members: [m] })
-    map.current.setView(toLatLng(m.x, m.z), 5)
+    api.get<Marker>('/api/map/event?key=' + encodeURIComponent(focusKey))
+      .then((found) => { setFocusMarker(found); select(found) })
+      .catch(() => setNotice('That event is no longer stored (events are kept for the retention period in Settings → Data).'))
   }, [focusKey, events.data])
+
+  // Opened from Settings → Map & tracking: show the vehicles of that class.
+  const focusedClass = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!focusClass || focusedClass.current === focusClass || !data) return
+    focusedClass.current = focusClass
+    const v = vehicles.find((x) => ruleMatches({ match: focusClass }, x.class))
+    if (!v) { setNotice(`No vehicle matching “${focusClass}” is on the map right now.`); return }
+    showVehicle(v)
+  }, [focusClass, data])
+
+  // The latest copy of whatever is selected.
+  const shown: Shown | null = useMemo(() => {
+    if (!sel) return null
+    if (sel.kind === 'player') return sel
+    if (sel.kind === 'vehicle') {
+      const v = vehicles.find((x) => x.id === sel.id)
+      return { kind: 'vehicle', v: v ?? sel.last, gone: !v }
+    }
+    const site = sites.find((s) => s.members.some((m) => m.key === sel.key))
+    return { kind: 'event', m: site?.members.find((m) => m.key === sel.key) ?? sel.last, members: site?.members ?? sel.members }
+  }, [sel, data, sites])
+  const shownEvent = shown?.kind === 'event' ? shown.m : undefined
 
   useEffect(() => {
     const m = map.current
-    if (!m || sel?.kind !== 'event' || sel.m.category !== 'base_flag' || !sel.m.radius) return
-    const ring = L.circle(toLatLng(sel.m.x, sel.m.z), { radius: sel.m.radius * TILE / WORLD, color: '#c3a6ff', weight: 1, fillOpacity: 0.06, interactive: false }).addTo(m)
+    if (!m || !shownEvent || shownEvent.category !== 'base_flag' || !shownEvent.radius) return
+    const ring = L.circle(toLatLng(shownEvent.x, shownEvent.z), { radius: shownEvent.radius * TILE / WORLD, color: '#c3a6ff', weight: 1, fillOpacity: 0.06, interactive: false }).addTo(m)
     return () => { ring.remove() }
-  }, [sel])
+  }, [shownEvent?.key, shownEvent?.x, shownEvent?.z, shownEvent?.radius])
 
   // A selected kill shows where the killer stood, joined to the victim.
   useEffect(() => {
     const m = map.current
-    const kp = sel?.kind === 'event' && sel.m.category === 'death' ? sel.m.data?.killer_pos : undefined
-    if (!m || !kp || sel?.kind !== 'event') return
-    const line = L.polyline([toLatLng(sel.m.x, sel.m.z), toLatLng(kp.x, kp.z)], { color: '#ff5a3c', weight: 2, dashArray: '6 6', interactive: false }).addTo(m)
+    const kp = shownEvent?.category === 'death' ? shownEvent.data?.killer_pos : undefined
+    if (!m || !kp || !shownEvent) return
+    const line = L.polyline([toLatLng(shownEvent.x, shownEvent.z), toLatLng(kp.x, kp.z)], { color: '#ff5a3c', weight: 2, dashArray: '6 6', interactive: false }).addTo(m)
     const killer = L.marker(toLatLng(kp.x, kp.z), { icon: L.divIcon({ className: 'killer-pin', html: '<span></span>', iconSize: [14, 14], iconAnchor: [7, 7] }), interactive: false }).addTo(m)
-    killer.bindTooltip(tooltip('Killer: ' + (sel.m.data?.killer_name || 'unknown')), { permanent: true, direction: 'right', className: 'lbl' })
+    killer.bindTooltip(tooltip('Killer: ' + (shownEvent.data?.killer_name || 'unknown')), { permanent: true, direction: 'right', className: 'lbl' })
     return () => { line.remove(); killer.remove() }
-  }, [sel])
+  }, [shownEvent?.key])
 
   useEffect(() => { el.current?.classList.toggle('picking', !!pick) }, [pick])
   useEffect(() => {
@@ -243,6 +302,29 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
   const toggleKind = (kind: MapIcon) => setHiddenList((old) => old.includes(kind) ? old.filter((k) => k !== kind) : [...old, kind])
   const targets: Target[] = players.map((p) => ({ steam64: p.steam64, name: p.name || p.steam64, be_guid: p.be_guid }))
   const dests = eventDests(events.data)
+  const reveal = (kind: MapIcon, layer: keyof Layers) => {
+    if (hidden.has(kind)) setHiddenList((old) => old.filter((k) => k !== kind))
+    if (!show[layer]) setLayers({ ...show, [layer]: true })
+  }
+  // Finding something always makes it visible, whatever the filters say.
+  function showVehicle(v: MzVehicle) {
+    reveal(vehicleIcon(v, vehicleRules), 'vehicles')
+    setSel({ kind: 'vehicle', id: v.id, last: v })
+    map.current?.setView(toLatLng(v.x, v.z), 5)
+  }
+  const found = useMemo<Found[]>(() => {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    const hit = (...parts: (string | undefined)[]) => parts.some((p) => p?.toLowerCase().includes(q))
+    const out: Found[] = []
+    for (const p of players) if (hit(p.name, p.steam64)) out.push({ key: 'p' + p.steam64, label: p.name || p.steam64, sub: grid(p.x, p.z), kind: 'player', go: () => { if (!show.players) setLayers({ ...show, players: true }); setSel({ kind: 'player', id: p.steam64 }); map.current?.setView(toLatLng(p.x, p.z), 5) } })
+    for (const v of vehicles) if (hit(v.class, v.type, iconLabels[vehicleIcon(v, vehicleRules)])) out.push({ key: 'v' + v.id, label: v.class, sub: grid(v.x, v.z), kind: vehicleIcon(v, vehicleRules), go: () => showVehicle(v) })
+    for (const m of events.data ?? []) {
+      if (m.status !== 'active' || !hit(markerTitle(m), m.class, iconLabels[markerIcon(m)])) continue
+      out.push({ key: 'e' + m.key, label: markerTitle(m), sub: grid(m.x, m.z), kind: markerIcon(m), go: () => { setHiddenList((old) => old.filter((k) => k !== markerIcon(m))); setSel({ kind: 'event', key: m.key, last: m, members: [m] }); map.current?.setView(toLatLng(m.x, m.z), 5) } })
+    }
+    return out.slice(0, 12)
+  }, [query, data, events.data, vehicleRules, hiddenList.join(), storedLayersEarly])
 
   const cancelPending = () => { frozen.current = null; setPending(null); setRedraw((n) => n + 1) }
   const confirmTp = async () => {
@@ -259,15 +341,27 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
     } else setRedraw((n) => n + 1)
   }
   const activeEvents = events.data?.filter((m) => m.status === 'active').length ?? 0
+  const live = data?.source === 'bridge'
+  const age = Math.max(0, Math.round((now - state.lastUpdate.current) / 1000))
 
   return (
     <div className="mapwrap">
       <div className="mapbar">
         <strong>Chernarus</strong>
         {data && (data.available
-          ? <Badge state={data.fresh ? 'ok' : 'stale'} title={data.received_at ? 'Last telemetry ' + new Date(data.received_at).toLocaleString() : undefined}>{data.fresh ? 'live' : 'stale'} · {ago(data.received_at)}</Badge>
-          : <Badge state="unconfigured">no MetricZ data</Badge>)}
-        <span className="counts">{players.length} players · {data?.vehicles?.length ?? 0} vehicles · {activeEvents} active events</span>
+          ? <Badge state={fresh ? 'ok' : 'stale'} title={fresh ? (live ? `Live positions from the game server every ${data.interval_s || 2} s` : 'Positions from MetricZ every 15 s. Update @DZMBridge for live positions.') : 'No position update is arriving, so this may be out of date.'}>{fresh ? (live ? 'live' : 'slow') : 'stale'} · {age}s</Badge>
+          : <Badge state="unconfigured">no position data</Badge>)}
+        <span className="counts">{players.length} players · {vehicles.length} vehicles · {activeEvents} active events</span>
+        <div className="map-find">
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find player, vehicle, event…" aria-label="Find on the map" />
+          {query.trim().length >= 2 && <div className="map-find-list" role="listbox">
+            {!found.length ? <div className="muted small map-find-none">Nothing on the map matches.</div> : found.map((f) => (
+              <button key={f.key} type="button" role="option" aria-selected={false} onClick={() => { f.go(); setQuery('') }}>
+                {f.kind === 'player' ? <span className="map-key"><span className="dot" /></span> : <span className={`entity-pin icon-${f.kind} find-ico`} dangerouslySetInnerHTML={{ __html: iconSvg(f.kind) }} />}
+                <span className="grow">{f.label}</span><span className="muted small">{f.sub}</span>
+              </button>))}
+          </div>}
+        </div>
         <div className="layers" role="group" aria-label="Map layers">
           {layerNames.map(([k, l]) => <button key={k} type="button" className="chip toggle" aria-pressed={show[k]} onClick={() => toggle(k)} title={`Show or hide ${l.toLowerCase()} (remembered for your account)`}>{l}</button>)}
         </div>
@@ -278,6 +372,8 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
       </div>
       {tilesOk === false && <div className="warnings">Map tiles are not installed in /var/lib/dzm/tiles/chernarusplus (see docs/install-game-side.md). Markers still work.</div>}
       {data && !data.available && <div className="warnings">{data.reason}</div>}
+      {data?.available && !fresh && <div className="warnings" role="status">No position update for {age} s: everything on the map may be out of date. The game server may be restarting, or its connection to DZ Manager is down.</div>}
+      {notice && <div className="warnings row" role="status"><span>{notice}</span><button className="small" style={{ marginLeft: 'auto' }} onClick={() => setNotice('')}>Dismiss</button></div>}
       {hiddenActive > 0 && <div className="warnings row" role="status">
         <Icon name="events" /><span><b>{hiddenActive} active event{hiddenActive === 1 ? '' : 's'}</b> hidden by your map filters{hidden.size ? ` (hidden icons: ${[...hidden].map((k) => iconLabels[k]).join(', ')})` : ''}.</span>
         <button className="small" style={{ marginLeft: 'auto' }} onClick={() => { setLayers({ ...show, events: true, items: true, bases: true, deaths: true }); setHiddenList([]) }}>Show all</button>
@@ -286,8 +382,8 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
       <div className="mapbody">
         <div ref={el} className="map" />
         {pick && <div className="pick-banner"><Icon name="target" />Click the map to teleport {pick.name}<button className="small" onClick={() => setPick(null)}>Cancel</button></div>}
-        {sel && <Inspector sel={sel} player={selPlayer} targets={targets} dests={dests} onClose={() => setSel(null)} onPick={(t) => setPick(t)}
-          vehicleKind={sel.kind === 'vehicle' ? vehicleIcon(sel.v, vehicleRules) : undefined}
+        {shown && <Inspector sel={shown} player={selPlayer} targets={targets} dests={dests} onClose={() => setSel(null)} onPick={(t) => setPick(t)}
+          vehicleKind={shown.kind === 'vehicle' ? vehicleIcon(shown.v, vehicleRules) : undefined}
           onVehicleKind={(cls, kind) => setVehicleRules([{ match: cls, kind }, ...vehicleRules.filter((r) => r.match.toLowerCase() !== cls.toLowerCase())].slice(0, 100))}
           onTpHere={(t, m) => { const b = besides(m); setPending({ target: t, ...b, label: `beside ${markerTitle(m)} (${grid(b.x, b.z)})` }) }} />}
       </div>
@@ -317,13 +413,12 @@ export default function MapPage({ focusId, focusKey }: { focusId?: string; focus
 }
 
 function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, vehicleKind, onVehicleKind }: {
-  sel: NonNullable<Sel>; player?: MzPlayer; targets: Target[]; dests: ReturnType<typeof eventDests>
+  sel: Shown; player?: MzPlayer; targets: Target[]; dests: ReturnType<typeof eventDests>
   onClose: () => void; onPick: (t: Target) => void; onTpHere: (t: Target, m: Marker) => void
   vehicleKind?: MapIcon; onVehicleKind: (cls: string, kind: MapIcon) => void
 }) {
   const id = sel.kind === 'player' ? sel.id : null
   const prof = useApi<PlayerProfile>(id ? '/api/players/' + encodeURIComponent(id) : null)
-  const [who, setWho] = useState('')
   return (
     <div className="inspector" role="dialog" aria-label="Details">
       {sel.kind === 'player' && (!player ? (
@@ -346,7 +441,7 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, veh
           <div className="bars">
             {([['Health', player.health, 1, '#3ccf7e'], ['Blood', player.blood, 5000, '#ef5b4c'], ['Water', player.water, 5000, '#3987e5'], ['Energy', player.energy, 20000, '#f1c40f']] as const).map(([l, v, max, c]) => {
               const f = frac(v, max)
-              return <Fragment key={l}><span className="muted">{l}</span><Meter value={f} color={c} /><span title={v != null ? String(Math.round(v * 100) / 100) : 'Not reported by MetricZ'}>{f == null ? '—' : Math.round(f * 100) + '%'}</span></Fragment>
+              return <Fragment key={l}><span className="muted">{l}</span><Meter value={f} color={c} /><span title={v != null ? String(Math.round(v * 100) / 100) : 'Not reported'}>{f == null ? '—' : Math.round(f * 100) + '%'}</span></Fragment>
             })}
           </div>
           {flags.length > 0 && <p className="row wrap">{flags.map((f) => <Badge key={f} state="warn">{f}</Badge>)}</p>}
@@ -356,12 +451,14 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, veh
       {sel.kind === 'vehicle' && (
         <>
           <div className="head"><h3>{sel.v.class}</h3><button className="icon ghost" onClick={onClose} title="Close"><Icon name="close" /></button></div>
+          {sel.gone && <p className="warn small">This vehicle is no longer on the map. These are its last known details.</p>}
           <dl>
             <dt>Type</dt><dd>{sel.v.type || '—'}</dd>
-            <dt>Position</dt><dd>{grid(sel.v.x, sel.v.z)} <span className="muted small">{sel.v.x.toFixed(0)} / {sel.v.z.toFixed(0)}</span></dd>
-            <dt>Health</dt><dd>{pct(sel.v.health)}</dd>
-            <dt>Fuel</dt><dd>{pct(sel.v.fuel)}</dd>
+            <dt>Position</dt><dd>{grid(sel.v.x, sel.v.z)} <span className="muted small">{sel.v.x.toFixed(0)} / {sel.v.z.toFixed(0)}</span><CopyButton value={`${sel.v.x.toFixed(1)} ${sel.v.z.toFixed(1)}`} label="Copy coordinates" /></dd>
+            <dt>Health</dt><dd>{sel.v.health === 0 ? 'Ruined' : pct(sel.v.health)}</dd>
+            <dt>Fuel</dt><dd>{sel.v.fuel == null || sel.v.fuel < 0 ? '—' : pct(sel.v.fuel)}</dd>
             <dt>Crew</dt><dd>{sel.v.crew ?? '—'}</dd>
+            <dt>Speed</dt><dd>{sel.v.speed == null ? '—' : `${Math.round(sel.v.speed * 3.6)} km/h`}</dd>
             <dt>Engine</dt><dd>{sel.v.engine_on == null ? '—' : sel.v.engine_on ? 'Running' : 'Off'}</dd>
             <dt>Show as</dt><dd>
               <select value={vehicleKind} onChange={(e) => onVehicleKind(sel.v.class, e.target.value as MapIcon)} aria-label="Map icon for this vehicle class" title="Remembered for every vehicle of this class">
@@ -369,7 +466,7 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, veh
               </select>
             </dd>
           </dl>
-          <TpHere targets={targets} who={who} setWho={setWho} onGo={(t) => onTpHere(t, { ...sel.v, id: 0, key: '', category: 'custom', started_at: '', status: 'active', source: '', name: sel.v.class } as Marker)} />
+          <TpHere targets={targets} ended={sel.gone} onGo={(t) => onTpHere(t, { ...sel.v, id: 0, key: '', category: 'custom', started_at: '', status: 'active', source: '', name: sel.v.class } as Marker)} />
         </>
       )}
       {sel.kind === 'event' && (
@@ -392,30 +489,13 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, veh
             {!!sel.m.radius && <><dt>Territory</dt><dd>{sel.m.radius} m radius</dd></>}
             {sel.members.length > 1 && <><dt>Objects</dt><dd>{sel.members.length}<ul className="small">{sel.members.map((member) => <li key={member.id}>{markerTitle(member)} · {grid(member.x, member.z)}</li>)}</ul></dd></>}
             <dt>{sel.m.category === 'rare_item' ? sel.m.observation === 'item.observed' ? 'First observed' : 'Spawned' : 'Detected'}</dt><dd title={new Date(sel.m.started_at).toLocaleString()}>{ago(sel.m.started_at)}</dd>
+            {sel.m.status === 'active' && sel.m.last_seen_at && !['death', 'raid'].includes(sel.m.category) && <><dt>Last confirmed</dt><dd title={new Date(sel.m.last_seen_at).toLocaleString()}>{ago(sel.m.last_seen_at)}</dd></>}
             {sel.m.ended_at && <><dt>Ended</dt><dd title={new Date(sel.m.ended_at).toLocaleString()}>{ago(sel.m.ended_at)}</dd></>}
             <dt>Position</dt><dd>{grid(sel.m.x, sel.m.z)} <span className="muted small">{sel.m.x.toFixed(0)} / {sel.m.z.toFixed(0)}</span><CopyButton value={`${sel.m.x.toFixed(1)} ${sel.m.z.toFixed(1)}`} label="Copy coordinates" /></dd>
           </dl>
-          {sel.m.status === 'active' && <TpHere targets={targets} who={who} setWho={setWho} onGo={(t) => onTpHere(t, sel.m)} />}
+          <TpHere targets={targets} ended={sel.m.status !== 'active'} death={sel.m.category === 'death'} onGo={(t) => onTpHere(t, sel.m)} />
         </>
       )}
-    </div>
-  )
-}
-
-function TpHere({ targets, who, setWho, onGo }: { targets: Target[]; who: string; setWho: (v: string) => void; onGo: (t: Target) => void }) {
-  if (!targets.length) return <p className="hint">No players online to teleport here.</p>
-  const t = targets.find((x) => x.steam64 === who)
-  return (
-    <div className="qa-section">
-      <h4>Teleport a player here</h4>
-      <div className="row">
-        <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Player to teleport" style={{ flex: 1, minWidth: 0 }}>
-          <option value="">Choose player…</option>
-          {targets.map((p) => <option key={p.steam64} value={p.steam64}>{p.name}</option>)}
-        </select>
-        <button className="primary small" disabled={!t} onClick={() => t && onGo(t)}><Icon name="teleport" />Go</button>
-      </div>
-      <p className="hint">Lands a few metres beside it so you can check the loot.</p>
     </div>
   )
 }

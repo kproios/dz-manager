@@ -210,6 +210,24 @@ blockquote { border-left: 3px solid var(--line-2); margin: 0; padding: 4px 12px;
 .mapbar { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--side); }
 .mapbar .counts { color: var(--muted); font-size: 12.5px; }
 .mapwrap > .warnings { margin: 8px 14px 0; }
+.map-find { position: relative; width: 220px; max-width: 100%; }
+.map-find input { width: 100%; height: 28px; }
+.map-find-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1100; background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 30px #000a; max-height: 320px; overflow: auto; min-width: 260px; }
+.map-find-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: transparent; border: 0; border-radius: 0; text-align: left; height: auto; }
+.map-find-list button:hover, .map-find-list button:focus { background: var(--line); }
+.map-find-list .grow { min-width: 0; overflow-wrap: anywhere; }
+.map-find-none { padding: 9px 10px; }
+.find-ico { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
+.map-find-list .map-key { padding: 0; height: auto; flex: none; }
+.rule-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 170px auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.rule-row code { overflow-wrap: anywhere; }
+.rule-preview { margin: 8px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.status-list { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px 14px; margin: 0; align-items: baseline; }
+.status-list dt { color: var(--muted); }
+.status-list dd { margin: 0; }
+.status-list .hint { display: block; margin: 4px 0 0; }
+.stale-input { width: 72px; }
+@media (max-width: 640px) { .map-find { width: 100%; } .rule-row { grid-template-columns: minmax(0, 1fr) auto; } .status-list { grid-template-columns: 1fr; gap: 2px 0; } .status-list dd { margin-bottom: 10px; } }
 .mapbody { flex: 1; position: relative; min-height: 0; }
 .map { position: absolute; inset: 0; background: #0b0e11; }
 .map.picking, .map.picking .leaflet-interactive { cursor: crosshair !important; }
@@ -357,7 +375,23 @@ pre.wrap { white-space: pre-wrap; word-break: break-all; }
 .feed-row.admin { background: #16273a55; }
 .feed-row.admin b { color: var(--accent); }
 @media (max-width: 1100px) { .live { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 300px; } .live-side { border-left: 0; border-top: 1px solid var(--line); } .ban-form { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .layout.wide main { overflow: auto; } .live { height: auto; grid-template-rows: auto 360px; } .live-body.is-map { height: 70vh; } }
+@media (max-width: 760px) {
+  .layout.wide main { overflow: auto; }
+  .live { height: auto; grid-template-rows: auto 360px; }
+  /* On a phone the map is the page: the header must not take half the screen. */
+  .live-body.is-map { height: 88vh; height: 88dvh; }
+  .live-head { gap: 8px 16px; padding: 8px 10px; }
+  .live-head .grow, .live-head .spark-kv { display: none; }
+  .live-tabs button { height: 36px; }
+  .mapbar .layers { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+  .mapbar .layers .chip { flex: none; }
+  .legend { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .legend .map-key { flex: none; }
+  .legend .hint { display: none; }
+  .mapwrap > .warnings { margin: 6px 8px 0; padding: 6px 10px; font-size: 12.5px; }
+  /* Details open as a sheet over the bottom of the map, leaving the marker visible. */
+  .inspector { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-width: none; max-height: 58%; padding: 12px; }
+}
 
 /* logs */
 .log-filters { align-items: end; margin-bottom: 14px; }

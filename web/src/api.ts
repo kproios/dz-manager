@@ -64,11 +64,13 @@ export interface MzPlayer {
 export interface MzVehicle { id: string; class: string; type: string; x: number; y: number; z: number; health?: number; fuel?: number; crew?: number; speed?: number; engine_on?: boolean }
 export interface MapState {
   server_id: string; available: boolean; fresh: boolean; received_at?: string; reason?: string
+  /** Who provides positions now: 'bridge' (live) or 'metricz' (the slower fallback). */
+  source?: 'bridge' | 'metricz'; interval_s?: number
   players: MzPlayer[] | null; vehicles: MzVehicle[] | null
   perf?: { fps?: number; fps_avg?: number; fps_min?: number; players?: number; infected?: number; animals?: number; items?: number; vehicles: number; uptime_seconds?: number }
 }
 export interface DeathData { victim?: string; victim_name?: string; killer?: string; killer_name?: string; weapon?: string; cause?: string; distance_m?: number; killer_pos?: { x: number; z: number }; part?: string; detail?: string }
-export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; ended_at?: string; status: string; source: string; observation?: string; kind?:string; name?:string; group?:string; radius?:number; container?: string; data?: DeathData }
+export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; last_seen_at?: string; ended_at?: string; status: string; source: string; observation?: string; kind?:string; name?:string; group?:string; radius?:number; container?: string; data?: DeathData }
 export interface Player {
   steam64: string; be_guid: string; dayz_id: string; name: string; first_seen: string; last_seen: string
   playtime_seconds: number; kills: number; deaths: number; id_mismatch: boolean
@@ -78,7 +80,7 @@ export interface PlayerProfile {
   player: Player
   names: { name: string; first_seen: string; last_seen: string }[]
   sessions: { server_id: string; started_at: string; ended_at?: string; end_kind: string; source: string; duration_seconds: number }[]
-  combat: { ts: string; victim: string; killer?: string; weapon?: string; distance_m?: number; cause?: string; role: string }[]
+  combat: { ts: string; victim: string; killer?: string; weapon?: string; distance_m?: number; cause?: string; role: string; x?: number; z?: number }[]
   audit: AuditEntry[]
 }
 export interface Ban { id: number; steam64?: string; be_guid: string; name?: string; reason: string; created_at: string; expires_at?: string; issuer_name: string; revoked_at?: string; applied: string; status: string }

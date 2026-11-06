@@ -7,10 +7,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,9 +35,18 @@ const deathTTL = time.Minute
 const raidTTL = 30 * time.Minute
 
 const (
-	defaultTTL   = 3 * time.Hour // fallback end when a despawn is never reported
+	defaultTTL   = 3 * time.Hour // stored expiry of markers without an explicit ttl_s (pings decide, see Sweep)
 	rareItemKeep = 6 * time.Hour
 	settingsKey  = "bridge_tracking"
+	staleKey     = "map_stale_seconds"
+
+	// DefaultStaleSeconds removes a marker the game server stopped pinging. The
+	// bridge pings every marker every 30 s , so this survives
+	// a missed ping or two without keeping a ghost for long.
+	DefaultStaleSeconds = 120
+	minStaleSeconds     = 60
+	maxStaleSeconds     = 3600
+	sweepEvery          = 10 * time.Second
 )
 
 var reClass = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{1,63}$`)
@@ -181,23 +193,32 @@ func (s *Service) onStart(ctx context.Context, ev bridge.Event) {
 		ttl = defaultTTL
 	}
 	t := ev.Time.UTC().Format(time.RFC3339)
+	// Pings arrive constantly. Only tell browsers when the map would look different,
+	// so a refresh of the marker list is never wasted on an unchanged one.
+	var prevStatus, prevData string
+	var prevX, prevZ sql.NullFloat64
+	changed := s.DB.QueryRowContext(ctx, `SELECT status,x,z,data FROM map_events WHERE server_id=? AND key=?`, ev.ServerID, d.Key).Scan(&prevStatus, &prevX, &prevZ, &prevData) != nil ||
+		prevStatus != "active" || !prevX.Valid || !prevZ.Valid || math.Abs(prevX.Float64-ev.Pos.X) >= 1 || math.Abs(prevZ.Float64-ev.Pos.Z) >= 1 || prevData != string(ev.Data)
 	// Out-of-order safety: if an end for this key already arrived, keep it ended.
 	// A sighting *after* the recorded end proves the object still exists (for
 	// example an end inferred from a restart while the census was still running),
 	// so the marker comes back instead of staying hidden for the whole session.
 	const revive = `(map_events.status='expired' OR (map_events.status='ended' AND map_events.ended_at IS NOT NULL AND excluded.last_seen_at > map_events.ended_at))`
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO map_events(server_id,key,category,class,x,y,z,started_at,last_seen_at,expires_at,status,source,data) VALUES(?,?,?,?,?,?,?,?,?,?, 'active',?,?)
-		ON CONFLICT(server_id,key) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, last_seen_at=excluded.last_seen_at,
+	pinged := s.Now().UTC().Format(time.RFC3339)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO map_events(server_id,key,category,class,x,y,z,started_at,last_seen_at,pinged_at,expires_at,status,source,data) VALUES(?,?,?,?,?,?,?,?,?,?,?, 'active',?,?)
+		ON CONFLICT(server_id,key) DO UPDATE SET x=excluded.x, y=excluded.y, z=excluded.z, last_seen_at=excluded.last_seen_at, pinged_at=excluded.pinged_at,
 		started_at=MIN(map_events.started_at, excluded.started_at), category=excluded.category, class=excluded.class, data=excluded.data,
 		expires_at=CASE WHEN map_events.status='ended' AND NOT `+revive+` THEN map_events.expires_at ELSE excluded.expires_at END,
 		ended_at=CASE WHEN `+revive+` THEN NULL ELSE map_events.ended_at END,
 		status=CASE WHEN `+revive+` THEN 'active' ELSE map_events.status END
 		WHERE map_events.x IS NULL OR excluded.last_seen_at >= map_events.last_seen_at`,
-		ev.ServerID, d.Key, d.Category, trunc(d.Class), ev.Pos.X, ev.Pos.Y, ev.Pos.Z, t, t, ev.Time.Add(ttl).UTC().Format(time.RFC3339), ev.Source, string(ev.Data))
+		ev.ServerID, d.Key, d.Category, trunc(d.Class), ev.Pos.X, ev.Pos.Y, ev.Pos.Z, t, t, pinged, ev.Time.Add(ttl).UTC().Format(time.RFC3339), ev.Source, string(ev.Data))
 	if err != nil {
 		s.Log.Error("map event insert", "err", err)
 	}
-	s.pub()
+	if changed {
+		s.pub()
+	}
 }
 
 func (s *Service) onEnd(ctx context.Context, ev bridge.Event) {
@@ -246,16 +267,44 @@ func (s *Service) onServerStart(ctx context.Context, ev bridge.Event) {
 	s.pub()
 }
 
-// Sweep expires events whose end was never reported.
+// Sweep ends markers that are no longer confirmed. There are two kinds:
+//   - markers with their own ttl_s (deaths, raids) end when that time is up;
+//   - everything else exists only while the game server keeps pinging it. The
+//     bridge's delete hooks can miss objects, so "no ping for StaleSeconds" is
+//     what removes a marker. A later ping brings it straight back.
 func (s *Service) Sweep(ctx context.Context) {
-	now := s.Now().UTC().Format(time.RFC3339)
-	_, _ = s.DB.ExecContext(ctx, `UPDATE map_events SET status='expired', ended_at=expires_at WHERE status='active' AND expires_at < ?`, now)
-	_, _ = s.DB.ExecContext(ctx, `DELETE FROM map_events WHERE COALESCE(ended_at, expires_at) < ?`, s.Now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339))
+	now := s.Now().UTC()
+	stamp := now.Format(time.RFC3339)
+	cutoff := now.Add(-time.Duration(s.StaleSeconds(ctx)) * time.Second).Format(time.RFC3339)
+	changed := int64(0)
+	if res, err := s.DB.ExecContext(ctx, `UPDATE map_events SET status='expired', ended_at=expires_at WHERE status='active' AND COALESCE(json_extract(data,'$.ttl_s'),0)>0 AND expires_at < ?`, stamp); err == nil {
+		n, _ := res.RowsAffected()
+		changed += n
+	}
+	if res, err := s.DB.ExecContext(ctx, `UPDATE map_events SET status='expired', ended_at=last_seen_at WHERE status='active' AND COALESCE(json_extract(data,'$.ttl_s'),0)<=0 AND COALESCE(pinged_at,last_seen_at) < ?`, cutoff); err == nil {
+		n, _ := res.RowsAffected()
+		changed += n
+	}
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM map_events WHERE COALESCE(ended_at, expires_at) < ?`, now.Add(-30*24*time.Hour).Format(time.RFC3339))
+	if changed > 0 {
+		s.pub()
+	}
 }
 
-// Run sweeps every minute.
+// StaleSeconds is how long a marker may go without a ping.
+func (s *Service) StaleSeconds(ctx context.Context) int {
+	var raw string
+	if err := s.DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=?`, staleKey).Scan(&raw); err == nil {
+		if n, err := strconv.Atoi(raw); err == nil && n >= minStaleSeconds && n <= maxStaleSeconds {
+			return n
+		}
+	}
+	return DefaultStaleSeconds
+}
+
+// Run sweeps often enough that a dead marker leaves the map within seconds of its limit.
 func (s *Service) Run(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
+	t := time.NewTicker(sweepEvery)
 	defer t.Stop()
 	for {
 		s.Sweep(ctx)
@@ -323,6 +372,7 @@ type Marker struct {
 	Y           float64 `json:"y"`
 	Z           float64 `json:"z"`
 	StartedAt   string  `json:"started_at"`
+	LastSeenAt  string  `json:"last_seen_at,omitempty"` // last ping from the game server
 	EndedAt     *string `json:"ended_at,omitempty"`
 	Status      string  `json:"status"` // active | ended | expired | historical
 	Source      string  `json:"source"`
@@ -339,8 +389,80 @@ type Marker struct {
 // Register adds API routes.
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/map/events", s.list)
+	mux.HandleFunc("GET /api/map/event", s.one)
 	mux.HandleFunc("GET /api/settings/tracking", func(w http.ResponseWriter, r *http.Request) { httpx.JSON(w, 200, s.LoadTracking(r.Context())) })
 	mux.HandleFunc("PUT /api/settings/tracking", s.putTracking)
+	mux.HandleFunc("GET /api/settings/map", func(w http.ResponseWriter, r *http.Request) {
+		httpx.JSON(w, 200, mapSettings{StaleSeconds: s.StaleSeconds(r.Context())})
+	})
+	mux.HandleFunc("PUT /api/settings/map", s.putMapSettings)
+}
+
+type mapSettings struct {
+	StaleSeconds int `json:"stale_seconds"`
+}
+
+func (s *Service) putMapSettings(w http.ResponseWriter, r *http.Request) {
+	var in mapSettings
+	if err := httpx.Decode(r, 1<<10, &in); err != nil {
+		httpx.Error(w, 400, err.Error())
+		return
+	}
+	if in.StaleSeconds < minStaleSeconds || in.StaleSeconds > maxStaleSeconds {
+		httpx.Error(w, 400, fmt.Sprintf("must be between %d and %d seconds", minStaleSeconds, maxStaleSeconds))
+		return
+	}
+	if _, err := s.DB.ExecContext(r.Context(), `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, staleKey, strconv.Itoa(in.StaleSeconds)); err != nil {
+		httpx.Error(w, 500, err.Error())
+		return
+	}
+	a := audit.System
+	if u := auth.FromContext(r.Context()); u != nil {
+		a = u.Actor()
+	}
+	_ = s.Audit.Write(r.Context(), a, "settings.map_update", "", in, "ok", "")
+	s.Sweep(r.Context())
+	httpx.JSON(w, 200, in)
+}
+
+// markerSelect reads one marker row; scanMarker is its counterpart.
+const markerSelect = `SELECT id,key,category,class,x,y,z,started_at,COALESCE(pinged_at,last_seen_at),ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0),COALESCE(json_extract(data,'$.container'),''),CASE WHEN category IN ('death','raid') THEN data ELSE '' END FROM map_events`
+
+func scanMarker(row interface{ Scan(...any) error }) (Marker, error) {
+	var m Marker
+	var ended sql.NullString
+	var data string
+	if err := row.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &m.LastSeenAt, &ended, &m.Status, &m.Source, &m.Observation, &m.Name, &m.Kind, &m.Group, &m.Radius, &m.Container, &data); err != nil {
+		return m, err
+	}
+	if ended.Valid {
+		m.EndedAt = &ended.String
+	}
+	if data != "" && json.Valid([]byte(data)) {
+		m.Data = json.RawMessage(data)
+	}
+	return m, nil
+}
+
+// one returns a single marker by key, however old, so a link from the event log
+// or the live feed can always show that place and teleport to it.
+func (s *Service) one(w http.ResponseWriter, r *http.Request) {
+	p, _, err := s.Profiles.Active(r.Context())
+	if err != nil {
+		httpx.Error(w, 404, "no active server")
+		return
+	}
+	s.Sweep(r.Context())
+	m, err := scanMarker(s.DB.QueryRowContext(r.Context(), markerSelect+` WHERE server_id=? AND key=? AND x IS NOT NULL`, p.ID, r.URL.Query().Get("key")))
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.Error(w, 404, "that event is no longer stored")
+		return
+	}
+	if err != nil {
+		httpx.Error(w, 500, err.Error())
+		return
+	}
+	httpx.JSON(w, 200, m)
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request) {
@@ -401,7 +523,7 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	args = append(args, limit+1)
-	rows, err := s.DB.QueryContext(r.Context(), `SELECT id,key,category,class,x,y,z,started_at,ended_at,status,source,COALESCE(json_extract(data,'$.observation'),'item.spawn'),COALESCE(json_extract(data,'$.name'),''),COALESCE(json_extract(data,'$.kind'),''),COALESCE(json_extract(data,'$.group'),''),COALESCE(json_extract(data,'$.radius'),0),COALESCE(json_extract(data,'$.container'),''),CASE WHEN category IN ('death','raid') THEN data ELSE '' END FROM map_events
+	rows, err := s.DB.QueryContext(r.Context(), markerSelect+`
 		WHERE server_id=? AND x IS NOT NULL AND (status='active' OR (status IN ('ended','expired') AND ended_at >= ?) OR (status='historical' AND (expires_at >= ? OR started_at >= ?)))
 		AND (?=0 OR `+cursor+`) AND (?='' OR (class||' '||replace(category,'_',' ')||' '||status) LIKE ? ESCAPE '\') AND `+catSQL+`
 		ORDER BY `+order+` LIMIT ?`, args...)
@@ -412,18 +534,10 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []Marker{}
 	for rows.Next() {
-		var m Marker
-		var ended sql.NullString
-		var data string
-		if err := rows.Scan(&m.ID, &m.Key, &m.Category, &m.Class, &m.X, &m.Y, &m.Z, &m.StartedAt, &ended, &m.Status, &m.Source, &m.Observation, &m.Name, &m.Kind, &m.Group, &m.Radius, &m.Container, &data); err != nil {
+		m, err := scanMarker(rows)
+		if err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
-		}
-		if ended.Valid {
-			m.EndedAt = &ended.String
-		}
-		if data != "" && json.Valid([]byte(data)) {
-			m.Data = json.RawMessage(data)
 		}
 		out = append(out, m)
 	}

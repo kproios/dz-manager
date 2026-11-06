@@ -55,6 +55,7 @@ func BuildWizard(p *Profile, sec *Secrets, ingestURL string) Wizard {
 			"event_flush_seconds":  5,
 			"command_poll_seconds": 3,
 			"heartbeat_seconds":    30,
+			"live_seconds":         2,
 			"max_queue":            500,
 			"log_level":            "info",
 		},

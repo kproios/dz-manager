@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
-import { api, AutoMsgConfig, MapState } from '../api'
+import { api, AutoMsgConfig } from '../api'
 import { useApi } from '../hooks'
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, Pager, Seg, usePaged } from '../ui'
 import { Icon } from '../icons'
 import { useNotify } from '../App'
-import { usePref } from '../prefs'
-import { iconLabels, iconSvg, MapIcon, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
 
 /** Discord webhooks per channel. */
 export function DiscordChannels() {
@@ -211,34 +209,6 @@ export function AutoMessages() {
           </div>
           <span className="hint">Messages go out one at a time, in order. %players% = players online.</span>
         </div>
-      </div>
-    </Card>
-  )
-}
-
-/** Which icon each vehicle class gets on the map (per account). */
-export function VehicleIcons() {
-  const map = useApi<MapState>('/api/map/state', ['map'], 30000)
-  const [rules, setRules] = usePref<VehicleRule[]>('map.vehicleRules', [])
-  const [match, setMatch] = useState('')
-  const [kind, setKind] = useState<MapIcon>('bike')
-  const classes = new Map<string, number>()
-  for (const v of map.data?.vehicles ?? []) classes.set(v.class, (classes.get(v.class) ?? 0) + 1)
-  const set = (m: string, k: MapIcon) => setRules([{ match: m, kind: k }, ...rules.filter((r) => r.match.toLowerCase() !== m.toLowerCase())].slice(0, 100))
-  const ico = (k: MapIcon) => <span className={`entity-pin icon-${k}`} style={{ width: 16, height: 16, display: 'inline-block', verticalAlign: 'middle' }} dangerouslySetInnerHTML={{ __html: iconSvg(k) }} />
-  return (
-    <Card title={<><Icon name="map" />Map vehicle icons</>}>
-      <p className="hint" style={{ marginTop: 0 }}>The map shows every vehicle MetricZ reports. If bikes or boats are missing from the list below, the game isn't reporting them (MetricZ only tracks vehicles it recognises as transport).</p>
-      {!classes.size ? <Empty>No vehicles reported right now.</Empty> : <table><thead><tr><th>Vehicle class (live)</th><th className="num">On map</th><th>Shown as</th></tr></thead><tbody>
-        {[...classes.entries()].sort().map(([cls, n]) => { const k = vehicleIcon({ class: cls, type: '' }, rules); return <tr key={cls}><td><code>{cls}</code></td><td className="num">{n}</td>
-          <td><span className="row">{ico(k)}<select value={k} onChange={(e) => set(cls, e.target.value as MapIcon)} style={{ width: 150 }} aria-label={`Icon for ${cls}`}>{vehicleKinds.map((x) => <option key={x} value={x}>{iconLabels[x]}</option>)}</select></span></td></tr> })}
-      </tbody></table>}
-      <h4>Rules by name part</h4>
-      {rules.length > 0 && <div className="chips" style={{ marginBottom: 8 }}>{rules.map((r) => <span className="chip" key={r.match}>{ico(r.kind)} contains “{r.match}”<button title="Remove rule" onClick={() => setRules(rules.filter((x) => x !== r))}><Icon name="close" /></button></span>)}</div>}
-      <div className="row">
-        <input placeholder="Class name contains, e.g. Bicycle" value={match} onChange={(e) => setMatch(e.target.value)} />
-        <select value={kind} onChange={(e) => setKind(e.target.value as MapIcon)} style={{ width: 150 }} aria-label="Icon">{vehicleKinds.map((x) => <option key={x} value={x}>{iconLabels[x]}</option>)}</select>
-        <button className="small" disabled={match.trim().length < 2} onClick={() => { set(match.trim(), kind); setMatch('') }}><Icon name="plus" />Add</button>
       </div>
     </Card>
   )

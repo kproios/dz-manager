@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
+import { onStream, RESYNC } from './hooks'
 
 // Per-user UI preferences, stored server-side (/api/prefs, keyed by the SSO
 // subject) so they survive refreshes, sign-outs and other PCs. localStorage only
@@ -34,9 +35,29 @@ let pendingLocal: Prefs = {}
 
 function save() {
   window.clearTimeout(saveTimer)
-  const run = () => { api.put('/api/prefs', prefs).catch(() => { /* retried on the next change */ }) }
+  saving = true
+  const run = () => {
+    api.put('/api/prefs', prefs).catch(() => { /* retried on the next change */ }).finally(() => { saving = false })
+  }
   // Never overwrite the stored set with a partial copy before it has loaded.
   saveTimer = window.setTimeout(() => { if (loaded) run(); else loading?.then(() => { if (loaded) run() }) }, 500)
+}
+
+// Another device (or tab) changed a preference: show it here without a reload.
+let saving = false
+let listening = false
+function listen() {
+  if (listening) return
+  listening = true
+  onStream((event) => {
+    if ((event !== 'prefs' && event !== RESYNC) || saving || !loaded) return
+    api.get<Prefs>('/api/prefs').then((p) => {
+      if (saving || !p || JSON.stringify(p) === JSON.stringify(prefs)) return
+      prefs = p
+      writeLocal()
+      subs.forEach((f) => f())
+    }).catch(() => { /* the next change retries */ })
+  })
 }
 
 export function usePref<T>(key: string, fallback: T): [T, (v: T | ((old: T) => T)) => void] {
@@ -45,6 +66,7 @@ export function usePref<T>(key: string, fallback: T): [T, (v: T | ((old: T) => T
     const f = () => force((n) => n + 1)
     subs.add(f)
     ensureLoaded()
+    listen()
     return () => { subs.delete(f) }
   }, [])
   const value = (key in prefs ? prefs[key] : fallback) as T

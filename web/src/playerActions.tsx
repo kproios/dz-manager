@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import { ActionAvail, api, Marker } from './api'
+import { ActionAvail, api, MapState, Marker } from './api'
 import { useApi } from './hooks'
 import { useNotify } from './App'
+import { usePref } from './prefs'
 import { Confirm } from './ui'
 import { Icon, IconName } from './icons'
 import { grid, WORLD } from './util'
 import { iconLabels, markerIcon, markerTitle } from './mapIcons'
 
 export interface Target { steam64: string; name: string; be_guid?: string }
-export interface Dest { label: string; x: number; z: number }
+export interface Dest { label: string; x: number; z: number; group: string }
 
 const reClass = /^[A-Za-z][A-Za-z0-9_]{1,63}$/
 const KICK_REASONS = ['Server restart — please rejoin in a few minutes', 'Admin check — you may rejoin', 'Rule violation', 'Unstable connection / desync']
@@ -36,10 +37,77 @@ export function besides(m: Pick<Marker, 'x' | 'z'>): { x: number; z: number } {
   return { x: clamp(m.x + 4), z: clamp(m.z + 4) }
 }
 
+const when = (iso?: string) => iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : ''
+
+/** Teleport destinations: what is on the map now, then where people died, then past events. */
+export const DEST_GROUPS = ['Active events (lands a few metres beside it)', 'Recent deaths (where the body fell)', 'Past events (where it last was)']
 export function eventDests(markers: Marker[] | null | undefined): Dest[] {
-  return (markers ?? []).filter((m) => m.status === 'active')
-    .map((m) => ({ label: `${iconLabels[markerIcon(m)]}: ${markerTitle(m)} · ${grid(m.x, m.z)}`, ...besides(m) }))
+  const newestFirst = (a: Marker, b: Marker) => b.started_at.localeCompare(a.started_at)
+  const all = (markers ?? []).filter((m) => m.x != null && m.z != null)
+  const active = all.filter((m) => m.status === 'active')
+    .map((m) => ({ label: `${iconLabels[markerIcon(m)]}: ${markerTitle(m)} · ${grid(m.x, m.z)}`, group: DEST_GROUPS[0], ...besides(m) }))
     .sort((a, b) => a.label.localeCompare(b.label))
+  const past = all.filter((m) => m.status !== 'active').sort(newestFirst)
+  const deaths = past.filter((m) => m.category === 'death').slice(0, 30)
+    .map((m) => ({ label: `${markerTitle(m)} · ${when(m.started_at)} · ${grid(m.x, m.z)}`, group: DEST_GROUPS[1], ...besides(m) }))
+  const ended = past.filter((m) => m.category !== 'death').slice(0, 30)
+    .map((m) => ({ label: `${iconLabels[markerIcon(m)]}: ${markerTitle(m)} · ${when(m.ended_at || m.started_at)} · ${grid(m.x, m.z)}`, group: DEST_GROUPS[2], ...besides(m) }))
+  return [...active, ...deaths, ...ended]
+}
+
+/** Who to teleport: remembers the last choice, which is usually the admin themself. */
+export function TpHere({ targets, onGo, ended, death }: { targets: Target[]; onGo: (t: Target) => void; ended?: boolean; death?: boolean }) {
+  const [who, setWho] = usePref('map.tpPlayer', '')
+  if (!targets.length) return <p className="hint">No players online to teleport here.</p>
+  const t = targets.find((x) => x.steam64 === who)
+  return (
+    <div className="qa-section">
+      <h4>Teleport a player here</h4>
+      <div className="row">
+        <select value={t ? who : ''} onChange={(e) => setWho(e.target.value)} aria-label="Player to teleport" style={{ flex: 1, minWidth: 0 }}>
+          <option value="">Choose player…</option>
+          {targets.map((p) => <option key={p.steam64} value={p.steam64}>{p.name}</option>)}
+        </select>
+        <button className="primary small" disabled={!t} onClick={() => t && onGo(t)}><Icon name="teleport" />Go</button>
+      </div>
+      <p className="hint">{death ? 'Lands beside where they died. The body may be gone by now.' : ended ? 'This has ended: lands a few metres from where it last was.' : 'Lands a few metres beside it so you can check the loot.'}</p>
+    </div>
+  )
+}
+
+/** Teleport to a stored position from a page without a map (event log, player history). */
+export function TeleportButton({ x, z, label, death }: { x: number; z: number; label: string; death?: boolean }) {
+  const [open, setOpen] = useState(false)
+  return <>
+    <button className="small ghost" title={`Teleport a player to ${label}`} aria-label={`Teleport a player to ${label}`} onClick={() => setOpen(true)}><Icon name="teleport" /></button>
+    {open && <TeleportDialog x={x} z={z} label={label} death={death} onClose={() => setOpen(false)} />}
+  </>
+}
+
+function TeleportDialog({ x, z, label, death, onClose }: { x: number; z: number; label: string; death?: boolean; onClose: () => void }) {
+  const state = useApi<MapState>('/api/map/state', ['map'])
+  const run = useRunAction()
+  const [who, setWho] = usePref('map.tpPlayer', '')
+  const [busy, setBusy] = useState(false)
+  const targets: Target[] = (state.data?.players ?? []).map((p) => ({ steam64: p.steam64, name: p.name || p.steam64 }))
+  const t = targets.find((p) => p.steam64 === who)
+  const go = async () => {
+    if (!t) return
+    setBusy(true)
+    const ok = await run(t, 'teleport', 'Teleport', besides({ x, z }))
+    setBusy(false)
+    if (ok) onClose()
+  }
+  return <Confirm title={`Teleport to ${label}`} tone="primary" confirmLabel="Teleport" busy={busy} disabled={!t} onClose={onClose} onConfirm={go} body={
+    <div className="form">
+      {state.data && !targets.length ? <p className="muted">No players online to teleport.</p> : <label className="field">Player
+        <select value={t ? who : ''} autoFocus onChange={(e) => setWho(e.target.value)}>
+          <option value="">Choose player…</option>
+          {targets.map((p) => <option key={p.steam64} value={p.steam64}>{p.name}</option>)}
+        </select>
+      </label>}
+      <span className="hint">{grid(x, z)} · {x.toFixed(0)} / {z.toFixed(0)}. {death ? 'Lands beside where they died. The body may be gone by now.' : 'Lands a few metres beside this spot, on the ground.'}</span>
+    </div>} />
 }
 
 type Mode = 'message' | 'kick' | 'teleport' | 'give_item' | 'heal' | 'kill' | 'strip' | null
@@ -136,7 +204,7 @@ export function PlayerActions({ target, layout = 'row', dests = [], players = []
             <label className="field">Destination
               <select value={dest} onChange={(e) => setDest(e.target.value)} autoFocus>
                 <option value="">Choose…</option>
-                {dests.length > 0 && <optgroup label="Active events (lands a few metres beside it)">{dests.map((d, i) => <option key={i} value={'e:' + i}>{d.label}</option>)}</optgroup>}
+                {DEST_GROUPS.map((g) => dests.some((d) => d.group === g) && <optgroup key={g} label={g}>{dests.map((d, i) => d.group === g && <option key={i} value={'e:' + i}>{d.label}</option>)}</optgroup>)}
                 {players.filter((p) => p.steam64 !== target.steam64).length > 0 && <optgroup label="To another player">
                   {players.filter((p) => p.steam64 !== target.steam64).map((p) => <option key={p.steam64} value={'p:' + p.steam64}>{p.name || p.steam64}</option>)}
                 </optgroup>}

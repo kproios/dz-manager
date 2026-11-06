@@ -51,12 +51,25 @@ tolerate late and out-of-order events.
 | `player.connect` | `actor`, `data.name`, `data.uid` or `data.be_guid` (validated against Steam64) |
 | `player.disconnect` | `actor` |
 | `player.death` | `actor` = victim, `target` / `data.killer` = killer Steam64 (omit if none), `data.weapon`, `data.distance_m`, `data.killer_pos`, `data.cause`. Never send an invented attacker. |
-| `event.start` | `pos`, `data.key` (stable per occurrence), `data.category` (`heli_crash` / `airdrop` / `loot_box` / `custom`), `data.class`, optional `data.ttl_s` (≤ 24 h; default 3 h fallback expiry) |
+| `event.start`, `event.seen` | `pos`, `data.key` (stable per occurrence), `data.category` (`heli_crash` / `airdrop` / `loot_box` / `custom`), `data.class`, optional `data.ttl_s` (≤ 24 h). With `ttl_s` the marker ends when that time is up. Without it the emitter must keep sending `event.seen`: a marker with no ping for the configured limit (default 120 s, at least 60 s) is expired, and a later ping revives it. |
 | `event.end` | `data.key` |
 | `item.spawn` | `pos`, `data.class` (must be in the configured rare-item allow-list), `data.key` |
 
 Unknown types are **stored raw and flagged** (`known=false`), so a new emitter can start sending
 before the UI supports it. Reserved namespace for LBMaster: `lbm.*` (see #8).
+
+## POST `{base}/live`
+Current positions, separate from the event queue because only the latest values matter
+(nothing is stored or replayed). Sent every `live_seconds`.
+```json
+{"v": 1, "full": false, "interval_s": 2,
+ "players": [{"steam64": "7656119…", "name": "…", "x": 0, "y": 0, "z": 0, "health": 0.9, "blood": 1, "shock": 1, "water": 0.7, "energy": 0.6, "unconscious": false, "restrained": false, "bleeding": false}],
+ "vehicles": [{"id": "lo:hi", "class": "Motorbike_01_Blue", "type": "motorbike", "x": 0, "y": 0, "z": 0, "health": 1, "speed": 0, "crew": 0, "engine_on": false, "fuel": 0.5}],
+ "gone": ["lo:hi"]}
+```
+`players` is always everyone. `vehicles` holds only what changed unless `full` is true, when it
+is the complete list and anything absent is removed. `gone` lists deleted vehicles. Vitals are
+0..1 fractions and `speed` is m/s. Rows that fail validation are dropped.
 
 ## POST `{base}/commands/poll`
 Body `{}`. Returns up to 10 queued, unexpired commands and marks them `delivered`. A delivered

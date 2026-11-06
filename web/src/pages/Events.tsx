@@ -6,8 +6,9 @@ import { ActionName, LogDetails, LogPager, Page, readable, useLogQuery } from '.
 import { iconLabels, iconSvg, MapIcon, markerIcon, markerTitle } from '../mapIcons'
 import { usePref } from '../prefs'
 import { Icon, IconName } from '../icons'
+import { TeleportButton } from '../playerActions'
 
-interface Event { id: number; ts: string; type: string; actor: string; actor_name: string; known: boolean; data: Record<string, unknown>; subject?: { category: string; class: string; name: string; x: number; z: number } }
+interface Event { id: number; event_id: string; ts: string; type: string; actor: string; actor_name: string; known: boolean; data: Record<string, unknown>; subject?: { category: string; class: string; name: string; x: number; z: number; key: string }; pos?: { x: number; z: number } }
 
 // World-event categories as the map draws them.
 const CATS: [string, MapIcon, string][] = [
@@ -41,13 +42,14 @@ export default function Events() {
       <form className="row wrap log-filters" onSubmit={(e) => { e.preventDefault(); mq.submit() }}><label className="grow">Search classes or status<input type="search" value={mq.input} onChange={(e) => mq.setInput(e.target.value)} /></label><button type="submit">Search</button></form>
       {markers.error && <ErrorBox error={markers.error} />}
       {!markers.data?.items.length ? <Empty>No world events or item observations match.</Empty> : <div className="table-scroll"><table>
-        <thead><tr><th>What</th><th>Class</th><th>Status</th><th>Detected</th><th>Ended</th><th>Grid</th></tr></thead>
+        <thead><tr><th>What</th><th>Class</th><th>Status</th><th>Detected</th><th>Ended</th><th>Grid</th><th /></tr></thead>
         <tbody>{markers.data.items.map((m) => { const k = markerIcon(m); return <tr key={m.id}>
           <td><span className="row"><span className={`entity-pin icon-${k}`} style={{ width: 16, height: 16, display: 'inline-block' }} dangerouslySetInnerHTML={{ __html: iconSvg(k) }} />{markerTitle(m) === m.class ? (CATS.find((c) => c[0] === m.category)?.[2] || iconLabels[k]) : markerTitle(m)}</span></td>
           <td><Trunc text={m.class} max={240} /></td>
           <td><Badge state={m.status}>{m.observation === 'item.observed' ? 'First observed' : readable(m.status)}</Badge></td>
           <td title={fmtTime(m.started_at)}>{ago(m.started_at)}</td><td title={fmtTime(m.ended_at)}>{m.ended_at ? ago(m.ended_at) : '—'}</td>
-          <td><a href="#/map" title={`${m.x.toFixed(0)} / ${m.z.toFixed(0)}`}>{grid(m.x, m.z)}</a></td>
+          <td><a href={'#/map/event/' + encodeURIComponent(m.key)} title={`Show on the map (${m.x.toFixed(0)} / ${m.z.toFixed(0)})`}>{grid(m.x, m.z)}</a></td>
+          <td><TeleportButton x={m.x} z={m.z} label={`${markerTitle(m)} (${grid(m.x, m.z)})`} death={m.category === 'death'} /></td>
         </tr> })}</tbody>
       </table></div>}
       <LogPager page={mq.cursors.length} next={markers.data?.next_before} loading={markers.loading} onNewer={mq.newer} onOlder={mq.older} onLatest={mq.reset} />
@@ -64,12 +66,21 @@ export default function Events() {
       </form>
       {raw.error && <ErrorBox error={raw.error} />}
       {!raw.data ? <p role="status" className="muted">Loading activity…</p> : !raw.data.items.length ? <Empty>No activity matches these filters.</Empty> : <div className="table-scroll"><table>
-        <thead><tr><th>When</th><th>Event</th><th>Player</th><th>Details</th></tr></thead>
+        <thead><tr><th>When</th><th>Event</th><th>Player</th><th>Details</th><th /></tr></thead>
         <tbody>{raw.data.items.map((e) => <tr key={e.id}>
           <td className="nowrap" title={fmtTime(e.ts)}>{ago(e.ts)}</td>
           <td><ActionName action={e.type} /> {!e.known && <Badge state="warn" title="DZ Manager stored this event but has no handler for it">not handled</Badge>}</td>
           <td>{e.actor ? <a href={'#/players/' + e.actor} title={e.actor}>{e.actor_name || e.actor}</a> : <span className="muted">—</span>}</td>
-          <td>{e.subject ? <span className="row" style={{ gap: 6 }}><span className={`entity-pin icon-${markerIcon({ category: e.subject.category })}`} style={{ width: 16, height: 16, display: 'inline-block' }} dangerouslySetInnerHTML={{ __html: iconSvg(markerIcon({ category: e.subject.category })) }} />{CATS.find((c) => c[0] === e.subject!.category)?.[2] || readable(e.subject.category)} · <span className="muted">{e.subject.name || e.subject.class}</span> · <a href="#/map">{grid(e.subject.x, e.subject.z)}</a></span> : <LogDetails params={e.data} />}</td>
+          <td>{e.subject ? <span className="row" style={{ gap: 6 }}><span className={`entity-pin icon-${markerIcon({ category: e.subject.category })}`} style={{ width: 16, height: 16, display: 'inline-block' }} dangerouslySetInnerHTML={{ __html: iconSvg(markerIcon({ category: e.subject.category })) }} />{CATS.find((c) => c[0] === e.subject!.category)?.[2] || readable(e.subject.category)} · <span className="muted">{e.subject.name || e.subject.class}</span> · <a href={'#/map/event/' + encodeURIComponent(e.subject.key)}>{grid(e.subject.x, e.subject.z)}</a></span> : <LogDetails params={e.data} />}</td>
+          <td>{(() => {
+            const at = e.subject ?? e.pos
+            if (!at) return null
+            const death = e.type === 'player.death'
+            return <span className="row" style={{ gap: 4 }}>
+              {death && <a className="button small ghost" href={'#/map/event/' + encodeURIComponent('death:' + e.event_id)} title="Show on the map"><Icon name="map" /></a>}
+              <TeleportButton x={at.x} z={at.z} label={`${death ? 'the body' : 'this place'} (${grid(at.x, at.z)})`} death={death} />
+            </span>
+          })()}</td>
         </tr>)}</tbody>
       </table></div>}
       <LogPager page={q.cursors.length} next={raw.data?.next_before} loading={raw.loading} onNewer={q.newer} onOlder={q.older} onLatest={q.reset} />

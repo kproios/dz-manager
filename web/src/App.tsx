@@ -44,7 +44,7 @@ export default function App() {
   let page
   switch (route) {
     case 'live': page = <Live tab={args[0]} />; break
-    case 'map': page = <Live tab="map" />; break
+    case 'map': page = <Live tab="map" focusType={args[0]} focusValue={args[1]} />; break
     case 'players': page = args[0] ? <PlayerPage id={args[0]} /> : <Players />; break
     case 'events': page = <Events />; break
     case 'restarts': page = <Restarts />; break

@@ -371,6 +371,9 @@ type Combat struct {
 	DistanceM *float64 `json:"distance_m,omitempty"`
 	Cause     string   `json:"cause,omitempty"`
 	Role      string   `json:"role"` // kill | death
+	// Where the victim fell, so an admin can go there long after the marker ended.
+	X *float64 `json:"x,omitempty"`
+	Z *float64 `json:"z,omitempty"`
 }
 
 // Profile is the full player page.
@@ -425,13 +428,16 @@ func (s *Service) GetProfile(ctx context.Context, id string) (*Profile, error) {
 		}
 		rows.Close()
 	}
-	if rows, err := s.DB.QueryContext(ctx, `SELECT ts,victim,killer,weapon,distance_m,cause FROM combat WHERE victim=? OR killer=? ORDER BY ts DESC LIMIT 200`, p.Steam64, p.Steam64); err == nil {
+	if rows, err := s.DB.QueryContext(ctx, `SELECT ts,victim,killer,weapon,distance_m,cause,vx,vz FROM combat WHERE victim=? OR killer=? ORDER BY ts DESC LIMIT 200`, p.Steam64, p.Steam64); err == nil {
 		for rows.Next() {
 			var c Combat
-			var d sql.NullFloat64
-			if rows.Scan(&c.TS, &c.Victim, &c.Killer, &c.Weapon, &d, &c.Cause) == nil {
+			var d, vx, vz sql.NullFloat64
+			if rows.Scan(&c.TS, &c.Victim, &c.Killer, &c.Weapon, &d, &c.Cause, &vx, &vz) == nil {
 				if d.Valid {
 					c.DistanceM = &d.Float64
+				}
+				if vx.Valid && vz.Valid {
+					c.X, c.Z = &vx.Float64, &vz.Float64
 				}
 				c.Role = "death"
 				if c.Killer == p.Steam64 {

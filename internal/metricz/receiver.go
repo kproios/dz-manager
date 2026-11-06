@@ -33,12 +33,15 @@ type Receiver struct {
 	Publish func(Snapshot)
 	// OnPlayers is called with identities seen in each snapshot (feeds player history).
 	OnPlayers func(serverID string, ps []Player, at time.Time)
+	// PublishLive is called with each bridge position push (see live.go).
+	PublishLive func(LiveDelta)
 	// StaleAfter marks the layer stale when no push arrived (default 45 s = 3× MetricZ's 15 s).
 	StaleAfter time.Duration
 
-	mu    sync.Mutex
-	snaps map[string]Snapshot
-	txns  map[string]*txn
+	mu         sync.Mutex
+	snaps      map[string]Snapshot
+	txns       map[string]*txn
+	liveStates map[string]*liveState
 }
 
 type txn struct {
@@ -49,10 +52,11 @@ type txn struct {
 
 // Register adds the ingest routes.
 func (rc *Receiver) Register(mux *http.ServeMux) {
-	rc.snaps, rc.txns = map[string]Snapshot{}, map[string]*txn{}
+	rc.snaps, rc.txns, rc.liveStates = map[string]Snapshot{}, map[string]*txn{}, map[string]*liveState{}
 	if rc.StaleAfter == 0 {
 		rc.StaleAfter = 45 * time.Second
 	}
+	mux.HandleFunc("POST /ingest/v1/{token}/live", rc.live)
 	mux.HandleFunc("POST /ingest/metricz/api/v1/ingest/{instance}", rc.single)
 	mux.HandleFunc("POST /ingest/metricz/api/v1/ingest/{instance}/{txn}/{seq}", rc.chunk)
 	mux.HandleFunc("POST /ingest/metricz/api/v1/commit/{instance}/{txn}", rc.commit)
@@ -280,6 +284,10 @@ type MapState struct {
 	Vehicles   []Vehicle  `json:"vehicles"`
 	Perf       *Perf      `json:"perf,omitempty"`
 	Reason     string     `json:"reason,omitempty"`
+	// Source says who is providing positions right now: "bridge" (live, every
+	// IntervalSec seconds) or "metricz" (the slower fallback).
+	Source      string  `json:"source,omitempty"`
+	IntervalSec float64 `json:"interval_s,omitempty"`
 }
 
 // State builds the map state for the active profile.
@@ -289,13 +297,16 @@ func (rc *Receiver) State(ctx context.Context) MapState {
 		return MapState{Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no active server profile"}
 	}
 	snap, ok, fresh := rc.Latest(p.ID)
-	if !ok {
-		return MapState{ServerID: p.ID, Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no MetricZ data received yet: install MetricZ with the generated config (Settings → Servers → Connect)"}
+	st := MapState{ServerID: p.ID, Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no position data received yet: install @DZMBridge and MetricZ with the generated config (Settings → Servers → Connect)"}
+	if ok {
+		st = MapState{ServerID: p.ID, Available: true, Fresh: fresh, ReceivedAt: &snap.ReceivedAt, World: snap.World, Players: snap.Players, Vehicles: snap.Vehicles, Perf: &snap.Perf, Source: "metricz"}
+		if !fresh {
+			st.Reason = "stale: last MetricZ push " + snap.ReceivedAt.Format(time.RFC3339)
+		}
 	}
-	st := MapState{ServerID: p.ID, Available: true, Fresh: fresh, ReceivedAt: &snap.ReceivedAt, World: snap.World, Players: snap.Players, Vehicles: snap.Vehicles, Perf: &snap.Perf}
-	if !fresh {
-		st.Reason = "stale: last MetricZ push " + snap.ReceivedAt.Format(time.RFC3339)
-	}
+	rc.mu.Lock()
+	rc.applyLiveLocked(&st, p.ID)
+	rc.mu.Unlock()
 	return st
 }
 
