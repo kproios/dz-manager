@@ -77,6 +77,59 @@ class DZMB_ResultCallback : DZMB_Callback
 	}
 }
 
+class DZMB_LiveCallback : DZMB_Callback
+{
+	override void Completed()
+	{
+		DZMB_Bridge b = DZMB_Bridge.Get();
+		if (b)
+			b.OnLiveDone(m_Ok, m_Code);
+	}
+}
+
+// Every vehicle in the world. Motorbikes are not CarScripts and boats are not
+// either, so each script class registers itself here (see DZMB_Hooks.c). Static
+// because persistent vehicles can load before the bridge instance exists.
+class DZMB_Vehicles
+{
+	static ref array<Transport> s_All = new array<Transport>;
+	static ref array<string> s_Gone = new array<string>;
+
+	static void Add(Transport t)
+	{
+		if (t && s_All.Find(t) < 0)
+			s_All.Insert(t);
+	}
+
+	static void Remove(Transport t)
+	{
+		if (!t)
+			return;
+		int i = s_All.Find(t);
+		if (i < 0)
+			return;
+		s_All.Remove(i);
+		if (s_Gone.Count() < 200)
+			s_Gone.Insert(Id(t));
+	}
+
+	static string Id(Object o)
+	{
+		int lo, hi;
+		o.GetNetworkID(lo, hi);
+		return lo.ToString() + ":" + hi.ToString();
+	}
+
+	static string TypeOf(Transport t)
+	{
+		if (MotorbikeScript.Cast(t)) return "motorbike";
+		if (BoatScript.Cast(t)) return "boat";
+		if (HelicopterScript.Cast(t)) return "helicopter";
+		if (CarScript.Cast(t)) return "car";
+		return "transport";
+	}
+}
+
 class DZMB_Bridge
 {
 	static ref DZMB_Bridge s_Instance;
@@ -112,6 +165,11 @@ class DZMB_Bridge
 	protected string m_BanListHash;
 	protected float m_BanListAge;
 	protected ref map<string, int> m_RaidThrottle = new map<string, int>;
+	protected float m_LiveAcc;
+	protected float m_LiveWait;
+	protected bool m_LiveBusy;
+	protected int m_LiveTick;
+	protected ref map<Transport, string> m_VehicleSeen = new map<Transport, string>;
 
 	static DZMB_Bridge Get()
 	{
@@ -194,7 +252,164 @@ class DZMB_Bridge
 		foreach (string item : DZMB_Config.Get().rare_items)
 			if (!ValidItemClass(item)) invalid.Insert(item);
 		d.StrArray("tracking_invalid", invalid);
+		// Lets Settings show whether a save has really reached the game server.
+		d.IntV("tracking_revision", m_TrackingRevision).IntV("live_seconds", DZMB_Config.Get().live_seconds);
+		d.IntV("vehicles", DZMB_Vehicles.s_All.Count()).IntV("tracked", m_EventKeys.Count());
+		d.BoolV("census_running", m_ScanObjects != null || m_TrackingScanPending);
 		Emit("heartbeat", "", "", d.End(), false, "0 0 0");
+	}
+
+	// ---- live positions ----
+
+	// Called once a second. Sends every player each time, and vehicles only when
+	// they changed, with the complete list every 30 s so nothing can drift.
+	protected void PushLive(float dt)
+	{
+		if (m_LiveBusy)
+		{
+			// The request timeout is 10 s: never let a lost callback stop the map.
+			m_LiveWait += dt;
+			if (m_LiveWait < 30)
+				return;
+			m_LiveBusy = false;
+		}
+		int every = DZMB_Config.Get().live_seconds;
+		m_LiveAcc += dt;
+		if (m_LiveAcc < every)
+			return;
+		m_LiveAcc = 0;
+		m_LiveWait = 0;
+		int cycle = 30 / every;
+		if (cycle < 1)
+			cycle = 1;
+		bool full = m_LiveTick % cycle == 0;
+		m_LiveTick++;
+		if (full)
+			m_VehicleSeen.Clear();
+
+		string players = "";
+		array<Man> all = new array<Man>;
+		GetGame().GetPlayers(all);
+		foreach (Man man : all)
+		{
+			PlayerBase pb = PlayerBase.Cast(man);
+			if (!pb || !pb.GetIdentity() || !pb.IsAlive())
+				continue;
+			if (players != "")
+				players += ",";
+			players += LivePlayerJson(pb);
+		}
+
+		string vehicles = "";
+		for (int i = DZMB_Vehicles.s_All.Count() - 1; i >= 0; i--)
+		{
+			Transport t = DZMB_Vehicles.s_All[i];
+			if (!t)
+			{
+				DZMB_Vehicles.s_All.Remove(i);
+				continue;
+			}
+			string row = LiveVehicleJson(t, full);
+			if (row == "")
+				continue;
+			if (vehicles != "")
+				vehicles += ",";
+			vehicles += row;
+		}
+
+		DZMB_Json body = new DZMB_Json();
+		body.IntV("v", 1).BoolV("full", full).IntV("interval_s", every);
+		body.Raw("players", "[" + players + "]").Raw("vehicles", "[" + vehicles + "]").StrArray("gone", DZMB_Vehicles.s_Gone);
+		DZMB_Vehicles.s_Gone.Clear();
+		m_LiveBusy = true;
+		m_Http.Post("live", body.End(), new DZMB_LiveCallback());
+	}
+
+	void OnLiveDone(bool ok, int code)
+	{
+		m_LiveBusy = false;
+		if (!ok)
+			DZMB_Log.Warn("live position POST failed, code " + code.ToString());
+	}
+
+	protected string LivePlayerJson(PlayerBase p)
+	{
+		vector pos = p.GetPosition();
+		DZMB_Json j = new DZMB_Json();
+		j.Str("steam64", p.GetIdentity().GetPlainId()).Str("name", p.GetIdentity().GetName());
+		j.Num("x", pos[0]).Num("y", pos[1]).Num("z", pos[2]);
+		j.Num("health", p.GetHealth("", "Health") / p.GetMaxHealth("", "Health"));
+		j.Num("blood", p.GetHealth("", "Blood") / p.GetMaxHealth("", "Blood"));
+		j.Num("shock", p.GetHealth("", "Shock") / p.GetMaxHealth("", "Shock"));
+		if (p.GetStatWater())
+			j.Num("water", p.GetStatWater().Get() / p.GetStatWater().GetMax());
+		if (p.GetStatEnergy())
+			j.Num("energy", p.GetStatEnergy().Get() / p.GetStatEnergy().GetMax());
+		j.BoolV("unconscious", p.IsUnconscious()).BoolV("restrained", p.IsRestrained());
+		j.BoolV("bleeding", p.GetBleedingSourceCount() > 0);
+		return j.End();
+	}
+
+	// Empty when the vehicle has not changed since it was last sent (and full is false).
+	protected string LiveVehicleJson(Transport t, bool full)
+	{
+		int lo, hi;
+		t.GetNetworkID(lo, hi);
+		if (lo == 0 && hi == 0)
+			return ""; // not initialised yet
+
+		bool engine = false;
+		float fuel = -1;
+		CarScript car;
+		BoatScript boat;
+		MotorbikeScript bike;
+		if (Class.CastTo(car, t))
+		{
+			engine = car.EngineIsOn();
+			fuel = car.GetFluidFraction(CarFluid.FUEL);
+		}
+		else if (Class.CastTo(boat, t))
+		{
+			engine = boat.EngineIsOn();
+			fuel = boat.GetFluidFraction(BoatFluid.FUEL);
+		}
+		else if (Class.CastTo(bike, t))
+		{
+			engine = bike.EngineIsOn();
+			fuel = bike.GetFluidFraction(MotorbikeFluid.FUEL);
+		}
+		int crew = 0;
+		for (int seat = 0; seat < t.CrewSize(); seat++)
+		{
+			if (t.CrewMember(seat))
+				crew++;
+		}
+		vector pos = t.GetPosition();
+		float health = t.GetHealth01("", "");
+		float speed = GetVelocity(t).Length();
+		if (speed < 0.1)
+			speed = 0;
+
+		// Metre-level position and whole-percent values: floating on water or a
+		// settling suspension must not count as a change every tick.
+		int roundX = Math.Round(pos[0]);
+		int roundZ = Math.Round(pos[2]);
+		int roundHealth = Math.Round(health * 100);
+		int roundFuel = Math.Round(fuel * 100);
+		string seen = roundX.ToString() + "," + roundZ.ToString() + "," + crew.ToString() + "," + roundHealth.ToString() + "," + roundFuel.ToString();
+		if (engine)
+			seen += ",on";
+		if (!full && m_VehicleSeen.Get(t) == seen)
+			return "";
+		m_VehicleSeen.Set(t, seen);
+
+		DZMB_Json j = new DZMB_Json();
+		j.Str("id", lo.ToString() + ":" + hi.ToString()).Str("class", t.GetType()).Str("type", DZMB_Vehicles.TypeOf(t));
+		j.Num("x", pos[0]).Num("y", pos[1]).Num("z", pos[2]);
+		j.Num("health", health).Num("speed", speed).IntV("crew", crew).BoolV("engine_on", engine);
+		if (fuel >= 0)
+			j.Num("fuel", fuel);
+		return j.End();
 	}
 
 	void OnUpdate(float dt)
@@ -212,9 +427,13 @@ class DZMB_Bridge
 			m_LastTrackingScan = GetGame().GetTime();
 			ReconcileTracking();
 		}
-		if (m_EventRefreshAcc >= 60)
+		PushLive(dt);
+		// Every tracked marker is pinged on this timer. The panel removes a marker
+		// that stops being pinged, so the ping is what keeps it on the map.
+		if (m_EventRefreshAcc >= 30)
 		{
 			m_EventRefreshAcc = 0;
+			EndDeletedMarkers();
 			array<EntityAI> refresh = new array<EntityAI>;
 			foreach (EntityAI tracked, string key : m_EventKeys)
 				if (tracked && !m_LocalEntities.Contains(tracked)) refresh.Insert(tracked);
@@ -245,6 +464,31 @@ class DZMB_Bridge
 			m_PollAcc = 0;
 			m_PollBusy = true;
 			m_Http.Post("commands/poll", "{}", new DZMB_PollCallback());
+		}
+	}
+
+	// Some world objects go away without reaching our EEDelete hooks (their class
+	// is not a script House or ItemBase). The engine then clears the map key: end
+	// those markers now instead of leaving the panel to time them out.
+	protected void EndDeletedMarkers()
+	{
+		array<string> ended = new array<string>;
+		map<EntityAI, string> alive = new map<EntityAI, string>;
+		foreach (EntityAI entity, string markerKey : m_EventKeys)
+		{
+			if (entity)
+				alive.Set(entity, markerKey);
+			else
+				ended.Insert(markerKey);
+		}
+		if (ended.Count() == 0)
+			return;
+		m_EventKeys = alive;
+		foreach (string gone : ended)
+		{
+			DZMB_Json d = new DZMB_Json();
+			d.Str("key", gone);
+			Emit("event.end", "", "", d.End(), false, "0 0 0");
 		}
 	}
 
@@ -750,6 +994,7 @@ class DZMB_Bridge
 		s_CategoryCache = new map<string, string>;
 		m_TrackingScanPending = true;
 		DZMB_Log.Info("tracking settings applied: " + cfg.event_classes.Count().ToString() + " event classes, " + cfg.rare_items.Count().ToString() + " item classes");
+		Heartbeat(); // confirm to the panel straight away
 	}
 
 	void ReconcileTracking()
@@ -777,6 +1022,9 @@ class DZMB_Bridge
 			EntityAI entity = EntityAI.Cast(m_ScanObjects[m_ScanIndex]);
 			m_ScanIndex++;
 			if (!entity) continue;
+			// Safety net for the vehicle registry: anything that slipped past the hooks.
+			Transport vehicle = Transport.Cast(entity);
+			if (vehicle) DZMB_Vehicles.Add(vehicle);
 			string category;
 			if (WantsEntity(entity))
 			{
@@ -790,8 +1038,9 @@ class DZMB_Bridge
 			}
 		}
 		if (m_ScanIndex < m_ScanObjects.Count()) return;
-		DZMB_Log.Info("tracking census complete: " + m_ScanEvents.ToString() + " active events, " + m_ScanItems.ToString() + " existing ground items first observed, " + (GetGame().GetTime() - m_ScanStarted).ToString() + " ms");
+		DZMB_Log.Info("tracking census complete: " + m_ScanEvents.ToString() + " active events, " + m_ScanItems.ToString() + " existing ground items first observed, " + DZMB_Vehicles.s_All.Count().ToString() + " vehicles, " + (GetGame().GetTime() - m_ScanStarted).ToString() + " ms");
 		m_ScanObjects = null;
+		Heartbeat();
 	}
 
 	void OnEntitySpawned(EntityAI e)

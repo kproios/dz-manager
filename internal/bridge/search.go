@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"database/sql"
 	"encoding/json"
 	"github.com/kproios/dz-manager/internal/httpx"
 	"net/http"
@@ -51,7 +52,7 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 	// event.start/event.end only carry a key: join the marker so the log can
 	// say which event it was and where.
 	rows, err := b.DB.QueryContext(r.Context(), `SELECT e.id,e.event_id,e.type,e.ts,e.actor,COALESCE(p.name,e.actor),e.data,e.known,
- COALESCE(m.category,''),COALESCE(m.class,''),COALESCE(json_extract(m.data,'$.name'),''),COALESCE(m.x,0),COALESCE(m.z,0) FROM events e
+ COALESCE(m.category,''),COALESCE(m.class,''),COALESCE(json_extract(m.data,'$.name'),''),COALESCE(m.x,0),COALESCE(m.z,0),COALESCE(m.key,''),e.x,e.z FROM events e
  LEFT JOIN players p ON p.steam64=e.actor
  LEFT JOIN map_events m ON e.type IN ('event.start','event.end') AND m.server_id=e.server_id AND m.key=json_extract(e.data,'$.key')
  WHERE e.server_id=? AND (?=0 OR `+cursor+`)
@@ -67,10 +68,11 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 	var last int64
 	for rows.Next() {
 		var id int64
-		var eventID, kind, ts, actor, name, data, mCat, mClass, mName string
+		var eventID, kind, ts, actor, name, data, mCat, mClass, mName, mKey string
 		var mx, mz float64
+		var ex, ez sql.NullFloat64
 		var known bool
-		if err := rows.Scan(&id, &eventID, &kind, &ts, &actor, &name, &data, &known, &mCat, &mClass, &mName, &mx, &mz); err != nil {
+		if err := rows.Scan(&id, &eventID, &kind, &ts, &actor, &name, &data, &known, &mCat, &mClass, &mName, &mx, &mz, &mKey, &ex, &ez); err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
 		}
@@ -80,7 +82,11 @@ func (b *Bridge) search(w http.ResponseWriter, r *http.Request) {
 		}
 		item := map[string]any{"id": id, "event_id": eventID, "type": kind, "ts": ts, "actor": actor, "actor_name": name, "data": json.RawMessage(data), "known": known}
 		if mCat != "" {
-			item["subject"] = map[string]any{"category": mCat, "class": mClass, "name": mName, "x": mx, "z": mz}
+			item["subject"] = map[string]any{"category": mCat, "class": mClass, "name": mName, "x": mx, "z": mz, "key": mKey}
+		}
+		// Deaths, raids and joins carry where they happened.
+		if ex.Valid && ez.Valid && (ex.Float64 != 0 || ez.Float64 != 0) {
+			item["pos"] = map[string]any{"x": ex.Float64, "z": ez.Float64}
 		}
 		out.Items = append(out.Items, item)
 		last = id

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import { api, Profile } from '../api'
 import { useApi } from '../hooks'
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, Pager, Seg, SteamId, Trunc, usePaged } from '../ui'
 import { Icon } from '../icons'
 import { ago } from '../util'
 import { useNotify } from '../App'
-import { AutoMessages, BotApi, DiscordChannels, PlayerChecks, Retention, VehicleIcons } from './SettingsExtra'
+import { AutoMessages, BotApi, DiscordChannels, PlayerChecks, Retention } from './SettingsExtra'
+import { MapTrackingSettings } from './SettingsMap'
 import { usePref } from '../prefs'
 import { IconName } from '../icons'
 
@@ -45,7 +46,7 @@ function Tabs({ value, onChange }: { value: SettingsTab; onChange: (t: SettingsT
 
 export default function Settings() {
   const profiles = useApi<Profile[]>('/api/profiles', ['profiles'])
-  const bridge = useApi<any>('/api/bridge', ['capabilities'])
+  const bridge = useApi<any>('/api/bridge', ['capabilities'], 10000)
   const [edit, setEdit] = useState<Edit | null>(null)
   const [wizard, setWizard] = useState<any>(null)
   const [confirm, setConfirm] = useState<{ p: Profile; what: 'rotate-ingest' | 'archive' | 'activate' } | null>(null)
@@ -131,7 +132,7 @@ export default function Settings() {
       </Card>
       </>}
       {tab === 'players' && <><PlayerChecks /><PriorityQueue /></>}
-      {tab === 'map' && <><Tracking invalid={b?.info?.tracking_invalid || []} /><VehicleIcons /></>}
+      {tab === 'map' && <MapTrackingSettings bridge={b} />}
       {tab === 'messages' && <AutoMessages />}
       {tab === 'integrations' && <><DiscordChannels /><BotApi /></>}
       {tab === 'data' && <Retention />}
@@ -175,83 +176,6 @@ export default function Settings() {
 
 function Snippet({ title, text }: { title: string; text: string }) {
   return <><h4 className="row">{title}<CopyButton value={text} label="Copy" /></h4><pre>{text}</pre></>
-}
-
-const CATEGORIES: [string, string][] = [['heli_crash', 'Helicrash'], ['plane_crash', 'Aircraft crash'], ['airdrop', 'Airdrop'], ['loot_box', 'Loot box'], ['military_convoy', 'Convoy'], ['police', 'Police'], ['train', 'Train'], ['base_flag', 'Base flag'], ['custom', 'Other event']]
-const reClass = /^[A-Za-z][A-Za-z0-9_]{1,63}$/
-
-function Tracking({ invalid }: { invalid: string[] }) {
-  const t = useApi<{ event_classes: Record<string, string>; rare_items: string[] }>('/api/settings/tracking')
-  const [rows, setRows] = useState<[string, string][] | null>(null)
-  const [items, setItems] = useState<string[] | null>(null)
-  const [filter, setFilter] = useState('')
-  const [nc, setNc] = useState({ cls: '', cat: 'heli_crash' })
-  const [ni, setNi] = useState('')
-  const [saving, setSaving] = useState(false)
-  const notify = useNotify()
-  useEffect(() => {
-    if (t.data && rows == null) { setRows(Object.entries(t.data.event_classes).sort((a, b) => a[0].localeCompare(b[0]))); setItems([...t.data.rare_items]) }
-  }, [t.data])
-  const bad = useMemo(() => new Set(invalid), [invalid.join()])
-  const shown = (rows ?? []).filter(([c, cat]) => !filter || (c + ' ' + cat).toLowerCase().includes(filter.toLowerCase()))
-  const pg = usePaged(shown, 15)
-  if (!t.data || !rows || !items) return t.error ? <Card title="Event & item tracking"><ErrorBox error={t.error} /></Card> : null
-  const origRows = Object.entries(t.data.event_classes).sort((a, b) => a[0].localeCompare(b[0]))
-  const dirty = JSON.stringify(origRows) !== JSON.stringify([...rows].sort((a, b) => a[0].localeCompare(b[0]))) || JSON.stringify(t.data.rare_items) !== JSON.stringify(items)
-  const clsTaken = rows.some(([c]) => c.toLowerCase() === nc.cls.trim().toLowerCase())
-  const itemTaken = items.some((c) => c.toLowerCase() === ni.trim().toLowerCase())
-  const save = async () => {
-    setSaving(true)
-    try {
-      await api.put('/api/settings/tracking', { event_classes: Object.fromEntries(rows), rare_items: items })
-      notify('Tracking saved. The bridge applies it on its next poll and rescans (at most once a minute).')
-      setRows(null); setItems(null); t.reload()
-    } catch (e: any) { notify(e.message, 'bad') } finally { setSaving(false) }
-  }
-  return (
-    <Card title="Event & item tracking" actions={<>{dirty && <span className="muted small">Unsaved changes</span>}
-      {dirty && <button className="small ghost" onClick={() => { setRows(null); setItems(null); t.reload() }}>Discard</button>}
-      <button className="small primary" disabled={!dirty || saving} onClick={save}>{saving ? 'Saving…' : 'Save & rescan'}</button></>}>
-      {invalid.length > 0 && <div className="warnings">The game server doesn't know {invalid.length === 1 ? 'this class' : 'these classes'}: <b>{invalid.join(', ')}</b>. Check the spelling or remove {invalid.length === 1 ? 'it' : 'them'}.</div>}
-      <div className="grid two" style={{ marginBottom: 0 }}>
-        <div>
-          <h4>World events ({rows.length})</h4>
-          <div className="row" style={{ marginBottom: 8 }}>
-            <input type="search" placeholder="Filter classes" value={filter} onChange={(e) => { setFilter(e.target.value); pg.setPage(1) }} />
-          </div>
-          {!shown.length ? <Empty>{filter ? 'No classes match.' : 'No event classes yet.'}</Empty> : (
-            <table>
-              <thead><tr><th>Classname</th><th>Shown as</th><th /></tr></thead>
-              <tbody>{pg.rows.map(([c, cat]) => (
-                <tr key={c}>
-                  <td><Trunc text={c} max={220} className={bad.has(c) ? 'warn' : ''} /> {bad.has(c) && <Badge state="warn">unknown</Badge>}</td>
-                  <td><select value={cat} onChange={(e) => setRows(rows.map((r) => r[0] === c ? [c, e.target.value] : r))} aria-label={`Category for ${c}`}>{CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></td>
-                  <td className="num"><button className="icon ghost" title={`Remove ${c}`} onClick={() => setRows(rows.filter((r) => r[0] !== c))}><Icon name="close" /></button></td>
-                </tr>
-              ))}</tbody>
-            </table>
-          )}
-          <Pager {...pg} noun="classes" />
-          <div className="row" style={{ marginTop: 10 }}>
-            <input placeholder="New classname, e.g. Wreck_UH1Y" value={nc.cls} aria-invalid={nc.cls !== '' && (!reClass.test(nc.cls.trim()) || clsTaken)} onChange={(e) => setNc({ ...nc, cls: e.target.value })} style={{ flex: 1, minWidth: 0 }} />
-            <select value={nc.cat} onChange={(e) => setNc({ ...nc, cat: e.target.value })} style={{ width: 140 }} aria-label="Category">{CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-            <button className="small" disabled={!reClass.test(nc.cls.trim()) || clsTaken || rows.length >= 200} onClick={() => { setRows([...rows, [nc.cls.trim(), nc.cat]]); setNc({ ...nc, cls: '' }) }}><Icon name="plus" />Add</button>
-          </div>
-          {clsTaken && <span className="field-error">Already in the list.</span>}
-          <p className="hint">Parents work too: a base class (e.g. a crash base) covers every class that inherits from it.</p>
-        </div>
-        <div>
-          <h4>Tracked items on the ground ({items.length})</h4>
-          {!items.length ? <Empty>No items tracked.</Empty> : <div className="chips">{items.map((c) => <span className="chip" key={c} title={bad.has(c) ? 'Unknown on the game server' : c}><span className={bad.has(c) ? 'warn' : ''}>{c}</span><button title={`Stop tracking ${c}`} aria-label={`Remove ${c}`} onClick={() => setItems(items.filter((x) => x !== c))}><Icon name="close" /></button></span>)}</div>}
-          <div className="row" style={{ marginTop: 10 }}>
-            <input placeholder="Item classname, e.g. PunchedCard" value={ni} aria-invalid={ni !== '' && (!reClass.test(ni.trim()) || itemTaken)} onChange={(e) => setNi(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-            <button className="small" disabled={!reClass.test(ni.trim()) || itemTaken || items.length >= 200} onClick={() => { setItems([...items, ni.trim()]); setNi('') }}><Icon name="plus" />Add</button>
-          </div>
-          <p className="hint">Only items lying on the ground are shown (never inside inventories or containers). They move when dropped or picked up. No restart is needed.</p>
-        </div>
-      </div>
-    </Card>
-  )
 }
 
 const PRIO_DAYS: [number, string][] = [[0, 'Never expires'], [1, '1 day'], [7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']]

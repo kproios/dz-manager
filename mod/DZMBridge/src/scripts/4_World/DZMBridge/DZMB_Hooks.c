@@ -162,6 +162,65 @@ modded class House
 	}
 }
 
+// Live vehicle registry. These script classes do not share a common moddable
+// parent: MotorbikeScript extends Motorbike, not CarScript, which is why tools that
+// only hook CarScript and BoatScript never see motorbikes.
+modded class CarScript
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Add(this);
+	}
+	override void EEDelete(EntityAI parent)
+	{
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Remove(this);
+		super.EEDelete(parent);
+	}
+}
+
+modded class BoatScript
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Add(this);
+	}
+	override void EEDelete(EntityAI parent)
+	{
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Remove(this);
+		super.EEDelete(parent);
+	}
+}
+
+modded class MotorbikeScript
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Add(this);
+	}
+	override void EEDelete(EntityAI parent)
+	{
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Remove(this);
+		super.EEDelete(parent);
+	}
+}
+
+modded class HelicopterScript
+{
+	override void EEInit()
+	{
+		super.EEInit();
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Add(this);
+	}
+	override void EEDelete(EntityAI parent)
+	{
+		if (GetGame().IsDedicatedServer()) DZMB_Vehicles.Remove(this);
+		super.EEDelete(parent);
+	}
+}
+
 // Raids: vanilla base building and every mod built on BaseBuildingBase
 // (for example Building Fortifications barricades).
 modded class BaseBuildingBase

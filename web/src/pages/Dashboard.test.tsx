@@ -9,6 +9,9 @@ vi.mock('../App', () => ({ useNotify: () => () => {} }))
 vi.mock('leaflet', () => ({ default: {} }))
 vi.mock('../hooks', () => ({
   useNow: () => Date.parse('2026-11-04T12:00:00Z'),
+  useStream: () => {},
+  onStream: () => () => {},
+  RESYNC: '*resync',
   useApi: (path: string) => ({
     data: path === '/api/server/status' || path === '/api/server/players' ? {
       server_id: 'TestServer', query: { state: 'ok' }, rcon: { state: 'ok' },

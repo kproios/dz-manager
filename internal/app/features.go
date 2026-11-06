@@ -75,7 +75,8 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.MetricZ = &metricz.Receiver{DB: a.DB, Profiles: a.Profiles, Caps: a.Caps, Log: srv.Log,
 		Publish: func(s metricz.Snapshot) {
 			srv.Hub.Publish("map", map[string]any{"server_id": s.ServerID, "received_at": s.ReceivedAt})
-		}}
+		},
+		PublishLive: func(d metricz.LiveDelta) { srv.Hub.Publish("live", d) }}
 	a.MetricZ.OnPlayers = a.Players.Presence
 	a.MetricZ.Register(srv.Ingest)
 	a.MetricZ.RegisterAPI(srv.API)

@@ -82,6 +82,12 @@ type Info struct {
 	Dropped         int64     `json:"dropped"`
 	QueueDepth      int64     `json:"queue_depth"`
 	TrackingInvalid []string  `json:"tracking_invalid"`
+	// Reported by bridge: lets Settings prove a save reached the game server.
+	TrackingRevision *int64 `json:"tracking_revision,omitempty"`
+	LiveSeconds      int64  `json:"live_seconds,omitempty"`
+	Vehicles         int64  `json:"vehicles,omitempty"`
+	Tracked          int64  `json:"tracked,omitempty"`
+	CensusRunning    bool   `json:"census_running,omitempty"`
 }
 
 // Bridge implements ingest + commands.
@@ -332,9 +338,15 @@ func (b *Bridge) heartbeat(ev Event) {
 		Commands        []string `json:"commands"`
 		Dropped         int64    `json:"dropped"`
 		Queue           int64    `json:"queue"`
+		Revision        *int64   `json:"tracking_revision"`
+		LiveSeconds     int64    `json:"live_seconds"`
+		Vehicles        int64    `json:"vehicles"`
+		Tracked         int64    `json:"tracked"`
+		CensusRunning   bool     `json:"census_running"`
 	}
 	_ = json.Unmarshal(ev.Data, &d)
-	info := Info{ModVersion: d.ModVersion, GameVersion: d.GameVersion, Commands: d.Commands, Emitter: ev.Source, LastSeen: b.Now().UTC(), Dropped: d.Dropped, QueueDepth: d.Queue, TrackingInvalid: d.TrackingInvalid}
+	info := Info{ModVersion: d.ModVersion, GameVersion: d.GameVersion, Commands: d.Commands, Emitter: ev.Source, LastSeen: b.Now().UTC(), Dropped: d.Dropped, QueueDepth: d.Queue, TrackingInvalid: d.TrackingInvalid,
+		TrackingRevision: d.Revision, LiveSeconds: d.LiveSeconds, Vehicles: d.Vehicles, Tracked: d.Tracked, CensusRunning: d.CensusRunning}
 	b.mu.Lock()
 	b.info[ev.ServerID] = info
 	b.mu.Unlock()

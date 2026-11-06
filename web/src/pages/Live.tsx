@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ChatMessage, MapState, PerfPoint, Player, RconPlayer, ServerStatus } from '../api'
 import { useApi } from '../hooks'
+import { useLiveMap } from '../liveMap'
 import { Badge, Empty, ErrorBox, Meter, Trunc } from '../ui'
 import { Icon } from '../icons'
 import { fmtDuration } from '../util'
@@ -18,13 +19,16 @@ interface Ev { id: number; event_id: string; ts: string; type: string; actor: st
 type FeedKind = 'chat' | 'join' | 'death' | 'raid'
 
 /** Live server view: players and map side by side with a message box and live feed. */
-export default function Live({ tab: initial }: { tab?: string }) {
+export default function Live({ tab: initial, focusType, focusValue }: { tab?: string; focusType?: string; focusValue?: string }) {
   const [tabPref, setTab] = usePref<'players' | 'map'>('live.tab', 'players')
   const tab = (initial === 'map' || initial === 'players') ? initial : tabPref
   const [focus, setFocus] = useState<string | undefined>()
-  const [focusKey, setFocusKey] = useState<string | undefined>()
+  const [focusKeyState, setFocusKey] = useState<string | undefined>()
+  // Links from other pages: #/map/event/<key> and #/map/class/<vehicle class>.
+  const focusKey = focusType === 'event' ? focusValue : focusKeyState
+  const focusClass = focusType === 'class' ? focusValue : undefined
   const status = useApi<ServerStatus>('/api/server/status', ['server_status'])
-  const map = useApi<MapState>('/api/map/state', ['map'], 15000)
+  const map = useLiveMap()
   const perf = useApi<PerfPoint[]>('/api/perf?hours=2', [], 60000)
   const s = status.data
   const p = map.data?.available ? map.data.perf : undefined
@@ -47,7 +51,7 @@ export default function Live({ tab: initial }: { tab?: string }) {
           <button role="tab" aria-selected={tab === 'map'} onClick={() => go('map')}><Icon name="map" />Map</button>
         </div>
         <div className={'live-body' + (tab === 'map' ? ' is-map' : '')}>
-          {tab === 'map' ? <MapPage focusId={focus} focusKey={focusKey} /> : <Online status={s} map={map.data} onShow={(id) => { setFocus(id); setFocusKey(undefined); go('map') }} />}
+          {tab === 'map' ? <MapPage focusId={focus} focusKey={focusKey} focusClass={focusClass} /> :<Online status={s} map={map.data} onShow={(id) => { setFocus(id); setFocusKey(undefined); go('map') }} />}
         </div>
       </div>
       <Side status={s} onShowOnMap={(k) => { setFocusKey(k); setFocus(undefined); go('map') }} />
@@ -58,7 +62,7 @@ export default function Live({ tab: initial }: { tab?: string }) {
 function Online({ status, map, onShow }: { status?: ServerStatus | null; map?: MapState | null; onShow: (steam64: string) => void }) {
   const roster = useApi<{ rcon: ServerStatus['rcon']; players: RconPlayer[] | null }>('/api/server/players', ['server_status'])
   const hist = useApi<Player[]>('/api/players?limit=500', ['events'])
-  const events = useApi<Marker[]>('/api/map/events', ['map_events'], 60000)
+  const events = useApi<Marker[]>('/api/map/events?history_hours=24', ['map_events'], 60000)
   const known = useMemo(() => new Map((hist.data || []).map((p) => [p.be_guid, p])), [hist.data])
   const online = roster.data?.players ?? []
   const ids = online.map((p) => known.get(p.be_guid)?.steam64)
@@ -87,7 +91,8 @@ function Online({ status, map, onShow }: { status?: ServerStatus | null; map?: M
                           {k ? <a href={'#/players/' + k.steam64}><Trunc text={p.name} max={200} /></a> : <Trunc text={p.name} max={200} />}
                           <RiskIcon intel={i} />
                           {p.lobby && <Badge state="info" title="Still loading into the world">lobby</Badge>}
-                          {!p.verified && <Badge state="warn" title="BattlEye has not confirmed this player's GUID with its master server yet. Normal for a few seconds after joining; if it stays, BattlEye's master server is unreachable. It is not a ban or a cheat flag.">GUID pending</Badge>}
+                          {/* A GUID linked to a Steam64 the game server authenticated is proven whatever BattlEye's own check says. */}
+                          {!p.verified && !k && <Badge state="warn" title="BattlEye has not confirmed this GUID and the game server has not linked it to a Steam64 yet. Normal for a moment after joining. It is not a ban or a cheat flag.">identity pending</Badge>}
                         </span>
                         <span className="muted small">{i?.country || (k ? 'Steam64 ' + k.steam64 : 'not linked to a Steam64 yet')}</span>
                       </div>
