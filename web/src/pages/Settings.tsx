@@ -20,6 +20,18 @@ const PROVIDERS: [string, string, string][] = [
 const providerName = (k: string) => PROVIDERS.find((p) => p[0] === k)?.[1] || k
 const reHost = /^[A-Za-z0-9.-]{1,253}$|^\[?[0-9a-fA-F:]+\]?$/
 
+// The API refuses unknown fields and the Edit form starts from the full profile
+// (active, created_at, ...), so send only what profiles.Input accepts.
+export function profileInput(e: Edit) {
+  return {
+    name: e.name.trim(), provider_kind: e.provider_kind,
+    game_host: e.game_host.trim(), game_port: e.game_port,
+    query_host: e.query_host.trim(), query_port: e.query_port,
+    rcon_host: e.rcon_host.trim(), rcon_port: e.rcon_port,
+    rcon_password: e.rcon_password,
+  }
+}
+
 function problems(e: Edit): Partial<Record<keyof Edit, string>> {
   const out: Partial<Record<keyof Edit, string>> = {}
   if (!e.name.trim()) out.name = 'Give the server a name'
@@ -58,9 +70,8 @@ export default function Settings() {
     if (!edit || Object.keys(errs).length) return
     setSaving(true)
     try {
-      const { id, ...body } = edit
-      const clean = { ...body, name: body.name.trim(), game_host: body.game_host.trim(), query_host: body.query_host.trim(), rcon_host: body.rcon_host.trim() }
-      if (id) await api.put(`/api/profiles/${id}`, clean)
+      const clean = profileInput(edit)
+      if (edit.id) await api.put(`/api/profiles/${edit.id}`, clean)
       else await api.post('/api/profiles', clean)
       notify('Server saved')
       setEdit(null)
