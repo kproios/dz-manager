@@ -31,6 +31,25 @@ func TestProfileLifecycle(t *testing.T) {
 	if sec.RconPassword != "pw1" {
 		t.Fatal("password lost on update")
 	}
+	// The Edit form sends exactly these keys; a read-only field is refused.
+	form := map[string]any{
+		"name":          "TestServer",
+		"provider_kind": profiles.SelfhostedArchitect,
+		"game_host":     "10.0.0.201",
+		"game_port":     2302,
+		"query_host":    "",
+		"query_port":    27016,
+		"rcon_host":     "",
+		"rcon_port":     2305,
+		"rcon_password": "",
+	}
+	if code := e.JSON("PUT", "/api/profiles/"+a.ID, form, &upd); code != 200 || upd.GameHost != "10.0.0.201" {
+		t.Fatalf("form update = %d: %+v", code, upd)
+	}
+	form["active"] = true
+	if code := e.JSON("PUT", "/api/profiles/"+a.ID, form, nil); code != 400 {
+		t.Fatalf("update with read-only field = %d, want 400", code)
+	}
 	// Switch active.
 	if code := e.JSON("POST", "/api/profiles/"+b.ID+"/activate", nil, nil); code != 200 {
 		t.Fatalf("activate = %d", code)
