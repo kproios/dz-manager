@@ -1,5 +1,5 @@
 # Publishes a release in the exact shape of docs/contracts/host-and-release.md.
-# The #21 host updater installs it automatically within ~30 minutes.
+# The host updater (deploy/bin/dzm-update) installs it automatically within ~30 minutes.
 name: release
 on:
   push:

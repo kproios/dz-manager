@@ -25,14 +25,14 @@ only, never in a release); add the `DZM_OIDC_*` values it prints, then link it u
 | `cmd/dzm` | the binary (serve, version, check-config, admin invite-owner) |
 | `internal/auth` | accounts: password/Steam/OIDC sign-in, TOTP 2FA, invites, sessions, CSRF |
 | `internal/perm` | roles and the permission of every API route (deny by default) |
-| `internal/profiles` | server profiles + connect wizard (#20) |
-| `internal/rcon` | RCON + A2S connector (#15) |
-| `internal/metricz` | MetricZ receiver, live map state, perf (#5) |
-| `internal/restarts` | restart observation (#4) |
-| `internal/bridge` | ingest v1 + command queue (#16) |
-| `internal/players` | identities, sessions, combat (#11) |
-| `internal/actions` | mod-backed player actions (#7) |
-| `internal/mapevents` | world events + rare items (#6) |
-| `internal/bans` | bans + external lists (#10) |
+| `internal/profiles` | server profiles + connect wizard |
+| `internal/rcon` | RCON + A2S connector |
+| `internal/metricz` | MetricZ receiver, live map state, perf |
+| `internal/restarts` | restart observation |
+| `internal/bridge` | ingest v1 + command queue |
+| `internal/players` | identities, sessions, combat |
+| `internal/actions` | mod-backed player actions |
+| `internal/mapevents` | world events + rare items |
+| `internal/bans` | bans + external lists |
 | `web/` | React UI |
 | `mod/DZMBridge` | server-side PBO sources |

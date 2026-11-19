@@ -1,4 +1,4 @@
-// Package bans keeps the owner's ban list (#10), enforced by BattlEye through
+// Package bans keeps the owner's ban list, enforced by BattlEye through
 // RCON so bans hold even when DZ Manager is offline, plus external banlists
 // imported for manual review only. External matches never trigger an action.
 package bans

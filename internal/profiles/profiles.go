@@ -1,4 +1,4 @@
-// Package profiles stores game-server connection profiles (#20). The stable
+// Package profiles stores game-server connection profiles. The stable
 // server_id survives host/provider changes so history stays attached.
 package profiles
 

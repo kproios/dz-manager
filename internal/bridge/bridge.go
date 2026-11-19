@@ -1,5 +1,5 @@
-// Package bridge is the DZ Manager side of the @DZMBridge server-side PBO
-// (#16): authenticated event ingest and a pull-based command queue. The
+// Package bridge is the DZ Manager side of the @DZMBridge server-side PBO:
+// authenticated event ingest and a pull-based command queue. The
 // contract is docs/contracts/ingest-v1.md.
 package bridge
 

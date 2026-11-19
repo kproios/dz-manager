@@ -1,6 +1,6 @@
 # Contract: game → DZ Manager ingest, version 1
 
-Status: **binding** for `@DZMBridge` (#16) and any other emitter, including third-party integrations. Implemented in `internal/bridge`. The tests in
+Status: **binding** for `@DZMBridge` and any other emitter, including third-party integrations. Implemented in `internal/bridge`. The tests in
 `internal/bridge/bridge_test.go` are the executable form of this document.
 
 Base URL: `DZM_INGEST_PUBLIC_URL + /ingest/v1/{token}`, for example
@@ -56,7 +56,7 @@ tolerate late and out-of-order events.
 | `item.spawn` | `pos`, `data.class` (must be in the configured rare-item allow-list), `data.key` |
 
 Unknown types are **stored raw and flagged** (`known=false`), so a new emitter can start sending
-before the UI supports it. Reserved namespace for LBMaster: `lbm.*` (see #8).
+before the UI supports it. Reserved namespace for LBMaster: `lbm.*`.
 
 ## POST `{base}/live`
 Current positions, separate from the event queue because only the latest values matter

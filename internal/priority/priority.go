@@ -1,4 +1,4 @@
-// Package priority keeps the owner's priority-queue list (#13, phase 1).
+// Package priority keeps the owner's priority-queue list (phase 1).
 // DayZ has no RCON command for queue priority and the provider owns it, so DZ
 // Manager never writes anywhere: it exports the list and tracks "applied?".
 package priority
