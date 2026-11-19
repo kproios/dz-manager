@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kproios/dz-manager/internal/actions"
 	"github.com/kproios/dz-manager/internal/alert"
+	"github.com/kproios/dz-manager/internal/apikeys"
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/automsg"
@@ -29,6 +31,7 @@ import (
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/server"
 	"github.com/kproios/dz-manager/internal/store"
+	"github.com/kproios/dz-manager/internal/worldmap"
 )
 
 // App holds the running components.
@@ -47,6 +50,9 @@ type App struct {
 	Players  *players.Service
 	Bans     *bans.Service
 
+	World        *worldmap.Service
+	Keys         *apikeys.Store
+	Actions      *actions.API
 	MapEvents    *mapevents.Service
 	Intel        *intel.Service
 	Chat         *chat.Service

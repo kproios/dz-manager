@@ -55,7 +55,7 @@ func TestDeathBecomesMapMarkerAndPublicKillFeed(t *testing.T) {
 	var tok struct {
 		Token string `json:"token"`
 	}
-	if code := e.JSON("POST", "/api/settings/bot/token", nil, &tok); code != 200 || !strings.HasPrefix(tok.Token, "dzm_") {
+	if code := e.JSON("POST", "/api/settings/api-keys", map[string]any{"name": "Discord bot", "scopes": []string{"public"}}, &tok); code != 201 || !strings.HasPrefix(tok.Token, "dzm_") {
 		t.Fatalf("token: %d %+v", code, tok)
 	}
 	code, body := publicGet(t, e, "/public/v1/killfeed", tok.Token)

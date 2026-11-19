@@ -1,5 +1,5 @@
 // Package restarts implements restart observation (#4). The provider
-// (Architect / VYKIX panel) is the restart authority; DZ Manager mirrors the
+// (your server panel or scheduler) is the restart authority; DZ Manager mirrors the
 // schedule, optionally announces, detects down/up transitions, classifies and
 // alerts. The DZ-Manager-driven mode is off unless explicitly verified.
 package restarts

@@ -246,43 +246,6 @@ modded class BaseBuildingBase
 	}
 }
 
-// Weapons do not inherit the script-level ItemBase.
-modded class Weapon_Base
-{
-	override void EEInit()
-	{
-		super.EEInit();
-		string category;
-		if (GetGame().IsDedicatedServer() && DZMB_Bridge.WantsEntity(this))
-			GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitEvent, 1000, false);
-	}
-	void DZMB_EmitEvent()
-	{
-		DZMB_Bridge bridge = DZMB_Bridge.Get();
-		if (bridge) bridge.OnEntitySpawned(this);
-	}
-	override void EEItemLocationChanged(notnull InventoryLocation oldLoc, notnull InventoryLocation newLoc)
-	{
-		super.EEItemLocationChanged(oldLoc, newLoc);
-		if (!GetGame().IsDedicatedServer() || !DZMB_Bridge.WantsEntity(this)) return;
-		DZMB_Bridge bridge = DZMB_Bridge.Get();
-		if (bridge && GetHierarchyParent()) bridge.OnEntityDeleted(this);
-		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitEvent, 1000, false);
-	}
-	override void EEDelete(EntityAI parent)
-	{
-		DZMB_Bridge bridge = DZMB_Bridge.Get();
-		if (bridge && GetGame().IsDedicatedServer()) bridge.OnEntityDeleted(this);
-		super.EEDelete(parent);
-	}
-	override void EEOnCECreate()
-	{
-		super.EEOnCECreate();
-		GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(DZMB_EmitCE, 1000, false);
-	}
-	void DZMB_EmitCE()
-	{
-		DZMB_Bridge bridge = DZMB_Bridge.Get();
-		if (bridge) bridge.OnCESpawn(this);
-	}
-}
+// Weapons: since DayZ 1.30 Weapon extends ItemBase (InventoryItemSuper), so
+// the ItemBase hooks above already cover them. A separate Weapon_Base hook
+// would report every weapon twice and no longer compiles.

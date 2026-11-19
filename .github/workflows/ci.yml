@@ -36,6 +36,15 @@ jobs:
         with:
           name: DZMBridge
           path: dist/DZMBridge.zip
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image and run it
+        run: |
+          docker build --build-arg VERSION="ci-${GITHUB_SHA::7}" -t dz-manager:ci .
+          docker run --rm dz-manager:ci version | grep -qx "ci-${GITHUB_SHA::7}"
+          docker image ls dz-manager:ci
   secrets:
     runs-on: ubuntu-latest
     permissions:

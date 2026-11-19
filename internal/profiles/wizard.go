@@ -23,8 +23,8 @@ func BuildWizard(p *Profile, sec *Secrets, ingestURL string) Wizard {
 		"Watch Capabilities on the dashboard: metricz and bridge turn 'ok' when data arrives.",
 	}
 	switch p.ProviderKind {
-	case SelfhostedArchitect:
-		steps[2] = "In CFTools Architect, add @DZMBridge and @MetricZ as server mods (-servermod). They are server-only: never add them to -mod=."
+	case Selfhosted:
+		steps[2] = "Add @DZMBridge (and @MetricZ if you use it) to the server's start line as server mods: -servermod=… in your launch script or panel. They are server-only: never add them to -mod=."
 	case VYKIX:
 		steps[0] = "Download DZMBridge.zip from the latest GitHub release and upload the @DZMBridge folder via the VYKIX panel file manager."
 		steps[3] = "Start the server once, then edit the two config files in the panel file manager (profiles folder) and restart."

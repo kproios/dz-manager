@@ -31,7 +31,7 @@ var Channels = []struct {
 }{
 	{"killfeed", "Kill feed", "Player kills and deaths", []string{hooks.Kill, hooks.Death}},
 	{"joins", "Joins & leaves", "Who joined or left", []string{hooks.Join, hooks.Leave}},
-	{"raids", "Raids", "Bases under attack, destroyed walls, code lock raids (with grid)", []string{hooks.Raid}},
+	{"raids", "Raids", "Bases under attack, destroyed walls, code lock raids (never where)", []string{hooks.Raid}},
 	{"world", "World events", "Helicrashes, airdrops, convoys spotted (no exact location)", []string{hooks.WorldEvent}},
 	{"bans", "Ban list", "Bans and unbans issued by admins", []string{hooks.Ban, hooks.Unban}},
 	{"server", "Server status", "Restart warnings, restarts and the server coming back", []string{hooks.Restart, hooks.Server}},

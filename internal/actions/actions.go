@@ -1,7 +1,8 @@
-// Package actions exposes mod-backed player actions (#7): teleport, give
-// item, heal, kill and strip, executed by @DZMBridge through the command queue.
-// Every action is validated here *and* in the mod, audited, and reports the
-// in-game postcondition returned by the mod — never just "sent".
+// Package actions exposes mod-backed actions executed by @DZMBridge through
+// the command queue: player actions (teleport, give item, heal, kill, strip)
+// and vehicle actions (refuel, repair, flip, stop engine, delete). Every
+// action is validated here *and* in the mod, audited, and reports the in-game
+// postcondition returned by the mod, never just "sent".
 package actions
 
 import (
@@ -24,31 +25,52 @@ import (
 	"github.com/kproios/dz-manager/internal/profiles"
 )
 
-// WorldSize is the playable square (metres) used for coordinate validation (Chernarus).
-const WorldSize = 15360.0
+// DefaultWorldSize is used when no world size is known (Chernarus).
+const DefaultWorldSize = 15360.0
 
-var reClass = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{1,63}$`)
+var (
+	reClass   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{1,63}$`)
+	reVehicle = regexp.MustCompile(`^-?[0-9]{1,10}:-?[0-9]{1,10}$`)
+	reSteam   = regexp.MustCompile(`^[0-9]{17}$`)
+)
 
 // Spec describes one action.
 type Spec struct {
 	Name        string `json:"name"`
 	Label       string `json:"label"`
+	Target      string `json:"target"` // player | vehicle
 	Destructive bool   `json:"destructive"`
 	// Confirm is the exact word the admin must type for destructive actions.
 	Confirm string `json:"confirm,omitempty"`
+	Help    string `json:"help,omitempty"`
 }
 
-// Catalog lists the supported actions in UI order.
+// Catalog lists the player actions in UI order.
 var Catalog = []Spec{
-	{Name: "teleport", Label: "Teleport"},
-	{Name: "give_item", Label: "Give item"},
-	{Name: "heal", Label: "Heal"},
-	{Name: "kill", Label: "Kill", Destructive: true, Confirm: "KILL"},
-	{Name: "strip", Label: "Strip inventory", Destructive: true, Confirm: "STRIP"},
+	{Name: "teleport", Label: "Teleport", Target: "player"},
+	{Name: "give_item", Label: "Give item", Target: "player"},
+	{Name: "heal", Label: "Heal", Target: "player"},
+	{Name: "kill", Label: "Kill", Target: "player", Destructive: true, Confirm: "KILL"},
+	{Name: "strip", Label: "Strip inventory", Target: "player", Destructive: true, Confirm: "STRIP"},
 }
 
-func spec(name string) (Spec, bool) {
+// VehicleCatalog lists the vehicle actions in UI order.
+var VehicleCatalog = []Spec{
+	{Name: "vehicle_refuel", Label: "Refuel", Target: "vehicle", Help: "Fills the fuel tank."},
+	{Name: "vehicle_repair", Label: "Repair", Target: "vehicle", Help: "Restores the vehicle and its attached parts to pristine and tops up coolant, oil and brake fluid. Missing parts are not added."},
+	{Name: "vehicle_flip", Label: "Flip upright", Target: "vehicle", Help: "Puts the vehicle back on its wheels where it is. Refused while it moves."},
+	{Name: "vehicle_stop_engine", Label: "Stop engine", Target: "vehicle", Help: "Turns the engine off."},
+	{Name: "vehicle_delete", Label: "Delete", Target: "vehicle", Destructive: true, Confirm: "DELETE", Help: "Removes the vehicle and everything in it. Refused while someone is inside."},
+}
+
+// Spec returns the spec of a player or vehicle action.
+func SpecFor(name string) (Spec, bool) {
 	for _, s := range Catalog {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	for _, s := range VehicleCatalog {
 		if s.Name == name {
 			return s, true
 		}
@@ -69,13 +91,16 @@ type Request struct {
 }
 
 // Validate checks parameters for an action and returns the mod payload.
-func Validate(action string, in Request) (map[string]any, error) {
-	sp, ok := spec(action)
+func Validate(action string, in Request, worldSize float64) (map[string]any, error) {
+	sp, ok := SpecFor(action)
 	if !ok {
 		return nil, fmt.Errorf("unknown action %q", action)
 	}
 	if sp.Destructive && in.Confirm != sp.Confirm {
 		return nil, fmt.Errorf("type %s to confirm this action", sp.Confirm)
+	}
+	if worldSize <= 0 {
+		worldSize = DefaultWorldSize
 	}
 	reason := strings.TrimSpace(in.Reason)
 	if len(reason) > 120 {
@@ -88,7 +113,7 @@ func Validate(action string, in Request) (map[string]any, error) {
 	switch action {
 	case "teleport":
 		if in.ToPlayer != "" {
-			if len(in.ToPlayer) != 17 {
+			if !reSteam.MatchString(in.ToPlayer) {
 				return nil, errors.New("to_player must be a Steam64 ID")
 			}
 			p["to_player"] = in.ToPlayer
@@ -98,8 +123,8 @@ func Validate(action string, in Request) (map[string]any, error) {
 			return nil, errors.New("x and z (or to_player) are required")
 		}
 		for _, v := range []float64{*in.X, *in.Z} {
-			if math.IsNaN(v) || v < 0 || v > WorldSize {
-				return nil, fmt.Errorf("coordinates must be within 0..%.0f", WorldSize)
+			if math.IsNaN(v) || v < 0 || v > worldSize {
+				return nil, fmt.Errorf("coordinates must be within 0..%.0f", worldSize)
 			}
 		}
 		p["x"], p["z"] = *in.X, *in.Z
@@ -126,12 +151,14 @@ func Validate(action string, in Request) (map[string]any, error) {
 	return p, nil
 }
 
-// API serves /api/players/{id}/actions.
+// API serves the player and vehicle action routes.
 type API struct {
 	Bridge   *bridge.Bridge
 	Players  *players.Service
 	Profiles *profiles.Store
 	Audit    *audit.Log
+	// WorldSize returns the active map's size in metres (0 = unknown).
+	WorldSize func(context.Context) float64
 	// Wait bounds how long the API waits for the in-game result.
 	Wait time.Duration
 
@@ -141,12 +168,37 @@ type API struct {
 
 // Register adds routes.
 func (a *API) Register(mux *http.ServeMux) {
-	a.inflight = map[string]bool{}
+	a.init()
+	mux.HandleFunc("GET /api/actions", func(w http.ResponseWriter, r *http.Request) {
+		httpx.JSON(w, 200, a.Available(r.Context(), Catalog))
+	})
+	mux.HandleFunc("GET /api/vehicles/actions", func(w http.ResponseWriter, r *http.Request) {
+		httpx.JSON(w, 200, a.Available(r.Context(), VehicleCatalog))
+	})
+	mux.HandleFunc("POST /api/players/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
+		a.serve(w, r, "player", r.PathValue("id"), r.PathValue("action"), actorOf(r))
+	})
+	mux.HandleFunc("POST /api/vehicles/{id}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
+		a.serve(w, r, "vehicle", r.PathValue("id"), r.PathValue("action"), actorOf(r))
+	})
+}
+
+func (a *API) init() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.inflight == nil {
+		a.inflight = map[string]bool{}
+	}
 	if a.Wait == 0 {
 		a.Wait = 20 * time.Second
 	}
-	mux.HandleFunc("GET /api/actions", a.catalog)
-	mux.HandleFunc("POST /api/players/{id}/actions/{action}", a.run)
+}
+
+func actorOf(r *http.Request) audit.Actor {
+	if u := auth.FromContext(r.Context()); u != nil {
+		return u.Actor()
+	}
+	return audit.System
 }
 
 // Availability of one action for the active server.
@@ -156,95 +208,119 @@ type Availability struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-func (a *API) catalog(w http.ResponseWriter, r *http.Request) {
-	p, _, err := a.Profiles.Active(r.Context())
-	out := make([]Availability, 0, len(Catalog))
-	for _, s := range Catalog {
+// Available reports which actions the active server's bridge supports.
+func (a *API) Available(ctx context.Context, list []Spec) []Availability {
+	p, _, err := a.Profiles.Active(ctx)
+	out := make([]Availability, 0, len(list))
+	for _, s := range list {
 		av := Availability{Spec: s}
 		switch {
 		case err != nil:
 			av.Reason = "no active server profile"
 		case !a.Bridge.Supports(p.ID, s.Name):
-			av.Reason = "requires @DZMBridge with the " + s.Name + " handler (not connected or not advertised)"
+			av.Reason = "requires @DZMBridge with the " + s.Name + " handler (not connected, or an older bridge version)"
 		default:
 			av.Available = true
 		}
 		out = append(out, av)
 	}
-	httpx.JSON(w, 200, out)
+	return out
 }
 
-func (a *API) run(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	action := r.PathValue("action")
-	u := auth.FromContext(ctx)
-	actor := audit.System
-	if u != nil {
-		actor = u.Actor()
-	}
+// Outcome is the result of one action.
+type Outcome struct {
+	Status    int             `json:"-"`
+	OK        bool            `json:"ok"`
+	CommandID string          `json:"command_id,omitempty"`
+	State     string          `json:"status,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+}
+
+func (a *API) serve(w http.ResponseWriter, r *http.Request, target, id, action string, actor audit.Actor) {
 	var in Request
 	if err := httpx.Decode(r, 4<<10, &in); err != nil {
 		httpx.Error(w, 400, err.Error())
 		return
 	}
-	payload, err := Validate(action, in)
-	if err != nil {
-		httpx.Error(w, 400, err.Error())
-		return
+	o := a.Run(r.Context(), actor, target, id, action, in)
+	httpx.JSON(w, o.Status, o)
+}
+
+// Run validates, queues and awaits one action. target is "player" (id =
+// Steam64 or player id) or "vehicle" (id = the bridge's network id "lo:hi").
+// Used by the panel, the public API and the MCP server.
+func (a *API) Run(ctx context.Context, actor audit.Actor, target, id, action string, in Request) Outcome {
+	a.init()
+	sp, ok := SpecFor(action)
+	if !ok || sp.Target != target {
+		return Outcome{Status: 400, Error: fmt.Sprintf("unknown %s action %q", target, action)}
 	}
-	pl, err := a.Players.Find(ctx, r.PathValue("id"))
+	size := DefaultWorldSize
+	if a.WorldSize != nil {
+		size = a.WorldSize(ctx)
+	}
+	payload, err := Validate(action, in, size)
 	if err != nil {
-		httpx.Error(w, 404, "unknown player")
-		return
+		return Outcome{Status: 400, Error: err.Error()}
 	}
 	prof, _, err := a.Profiles.Active(ctx)
 	if err != nil {
-		httpx.Error(w, 409, "no active server profile")
-		return
+		return Outcome{Status: 409, Error: "no active server profile"}
 	}
-	key := pl.Steam64 + "/" + action
+	params := map[string]any{}
+	targetID, auditTarget := "", ""
+	if target == "player" {
+		pl, err := a.Players.Find(ctx, id)
+		if err != nil {
+			return Outcome{Status: 404, Error: "unknown player"}
+		}
+		targetID, auditTarget = pl.Steam64, pl.Steam64
+		params["name"] = pl.Name
+	} else {
+		if !reVehicle.MatchString(id) {
+			return Outcome{Status: 400, Error: "vehicle id must be the bridge network id (\"lo:hi\") shown on the live map"}
+		}
+		targetID, auditTarget = id, "vehicle:"+id
+	}
+	for k, v := range payload {
+		params[k] = v
+	}
+	key := targetID + "/" + action
 	a.mu.Lock()
 	if a.inflight[key] {
 		a.mu.Unlock()
-		httpx.Error(w, 409, "this action is already running for this player")
-		return
+		return Outcome{Status: 409, Error: "this action is already running for this " + target}
 	}
 	a.inflight[key] = true
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); delete(a.inflight, key); a.mu.Unlock() }()
 
-	params := map[string]any{"name": pl.Name}
-	for k, v := range payload {
-		params[k] = v
-	}
-	id, err := a.Bridge.Enqueue(ctx, prof.ID, action, pl.Steam64, payload, actor, a.Wait)
+	auditAction := target + "." + strings.TrimPrefix(action, "vehicle_")
+	cid, err := a.Bridge.Enqueue(ctx, prof.ID, action, targetID, payload, actor, a.Wait)
 	if err != nil {
-		_ = a.Audit.Write(ctx, actor, "player."+action, pl.Steam64, params, "error", err.Error())
-		httpx.JSON(w, 409, map[string]any{"ok": false, "error": err.Error()})
-		return
+		_ = a.Audit.Write(ctx, actor, auditAction, auditTarget, params, "error", err.Error())
+		return Outcome{Status: 409, Error: err.Error()}
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.Wait+2*time.Second)
 	defer cancel()
-	c, err := a.Bridge.Await(wctx, id)
+	c, err := a.Bridge.Await(wctx, cid)
 	if err != nil || c == nil {
 		msg := "no result from the game server"
-		_ = a.Audit.Write(ctx, actor, "player."+action, pl.Steam64, params, "error", msg)
-		httpx.JSON(w, 504, map[string]any{"ok": false, "command_id": id, "error": msg})
-		return
+		_ = a.Audit.Write(ctx, actor, auditAction, auditTarget, params, "error", msg)
+		return Outcome{Status: 504, CommandID: cid, Error: msg}
 	}
-	switch c.Status {
-	case "ok":
-		_ = a.Audit.Write(ctx, actor, "player."+action, pl.Steam64, params, "ok", string(c.Result))
-		httpx.JSON(w, 200, map[string]any{"ok": true, "command_id": id, "result": json.RawMessage(nonEmpty(c.Result))})
-	default:
-		_ = a.Audit.Write(ctx, actor, "player."+action, pl.Steam64, params, "error", c.Status+": "+c.Error)
-		httpx.JSON(w, 502, map[string]any{"ok": false, "command_id": id, "status": c.Status, "error": c.Error})
+	if c.Status == "ok" {
+		_ = a.Audit.Write(ctx, actor, auditAction, auditTarget, params, "ok", string(c.Result))
+		return Outcome{Status: 200, OK: true, CommandID: cid, Result: nonEmpty(c.Result)}
 	}
+	_ = a.Audit.Write(ctx, actor, auditAction, auditTarget, params, "error", c.Status+": "+c.Error)
+	return Outcome{Status: 502, CommandID: cid, State: c.Status, Error: c.Error}
 }
 
-func nonEmpty(b json.RawMessage) []byte {
+func nonEmpty(b json.RawMessage) json.RawMessage {
 	if len(b) == 0 {
-		return []byte("null")
+		return json.RawMessage("null")
 	}
 	return b
 }

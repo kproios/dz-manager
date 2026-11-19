@@ -40,6 +40,7 @@ export const api = {
   get: <T>(p: string) => request<T>('GET', p),
   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b ?? {}),
   put: <T>(p: string, b: unknown) => request<T>('PUT', p, b),
+  del: <T>(p: string) => request<T>('DELETE', p),
 }
 
 // ---- types mirrored from the Go API ----
@@ -89,7 +90,17 @@ export interface Flags {
   external: { list: string; list_status: string; imported_at: string; identifier_type: string; identifier: string; reason?: string }[]
   review?: { decision: string; note: string; reviewer: string; at: string }
 }
-export interface ActionAvail { name: string; label: string; destructive: boolean; confirm?: string; available: boolean; reason?: string }
+export interface ActionAvail { name: string; label: string; target?: 'player' | 'vehicle'; help?: string; destructive: boolean; confirm?: string; available: boolean; reason?: string }
+
+/** A named place from the game's CfgWorlds config (towns, villages, hills…). */
+export interface WorldPlace { name: string; local_name?: string; kind: string; x: number; z: number }
+export interface WorldInfo { world: string; label: string; size: number; places: WorldPlace[]; source: 'bridge' | 'manual' | 'default'; reported_at?: string }
+export interface TileMeta { world: string; source: string; source_px: number; max_zoom: number; tile_size: number; format: string; installed_at: string }
+export interface WorldResp { world: WorldInfo; tiles?: TileMeta; tile_url?: string; max_px: number }
+export interface MapSourceFile { px: number; url: string; size?: string; fits: boolean; name: string; built?: string }
+export interface MapSource { slug: string; label: string; group: string; files: MapSourceFile[] }
+export interface MapSources { list_url: string; sources: MapSource[]; suggested: string; max_px: number }
+export interface MapJob { state: 'idle' | 'downloading' | 'decoding' | 'tiling' | 'done' | 'error'; world?: string; source?: string; bytes?: number; total?: number; tiles?: number; tiles_total?: number; error?: string; started_at?: string; finished_at?: string }
 export interface Schedule {
   server_id: string; enabled: boolean; times: string[]; timezone: string; mode: string; announce: boolean
   announce_minutes: number[]; announce_text: string; window_minutes: number; timeout_minutes: number; dry_run: boolean

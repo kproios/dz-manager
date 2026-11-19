@@ -1,18 +1,28 @@
 // Pure helpers (unit-tested).
 
-/** Chernarus world size in metres (DZMap tiles cover 0..WORLD at zoom 0 in 256 px). */
-export const WORLD = 15360
+/**
+ * World size in metres of the active map (map tiles cover 0..WORLD at zoom 0
+ * in 256 px). Chernarus until /api/map/world says otherwise; a live binding,
+ * so every importer sees the value set by setWorldSize.
+ */
+export let WORLD = 15360
 export const TILE = 256
-const K = TILE / WORLD
+
+/** Sets the active world size (called before the map is created). */
+export function setWorldSize(metres: number) {
+  if (isFinite(metres) && metres >= 1000) WORLD = metres
+}
 
 /** Game (x east, z north) → Leaflet CRS.Simple [lat, lng]. Y (altitude) is never used. */
 export function toLatLng(x: number, z: number): [number, number] {
-  return [z * K - TILE, x * K]
+  const k = TILE / WORLD
+  return [z * k - TILE, x * k]
 }
 
 /** Leaflet CRS.Simple [lat, lng] → game {x, z}. */
 export function fromLatLng(lat: number, lng: number): { x: number; z: number } {
-  return { x: lng / K, z: (lat + TILE) / K }
+  const k = TILE / WORLD
+  return { x: lng / k, z: (lat + TILE) / k }
 }
 
 export function fmtDuration(s?: number | null): string {
@@ -51,7 +61,7 @@ export function pct(v?: number | null): string {
   return v == null ? 'not reported' : `${Math.round(v * 100)}%`
 }
 
-/** Grid reference like iZurvive's 3-digit format (x/z in 100 m squares). */
+/** The usual 3-digit DayZ grid reference (x/z in 100 m squares, counted from the north-west). */
 export function grid(x: number, z: number): string {
   const p = (n: number) => String(Math.max(0, Math.floor(n / 100))).padStart(3, '0')
   return `${p(x)} ${p(WORLD - z)}`

@@ -4,18 +4,23 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // DZM_TZ works on hosts and images without a zoneinfo database
 
 	"github.com/kproios/dz-manager/internal/app"
 	"github.com/kproios/dz-manager/internal/config"
 	"github.com/kproios/dz-manager/internal/store"
+	"github.com/kproios/dz-manager/internal/worldmap"
 )
 
 // version is set at build time: -ldflags "-X main.version=vX.Y.Z".
@@ -32,6 +37,31 @@ func main() {
 	case "serve":
 		if err := serve(); err != nil {
 			fmt.Fprintln(os.Stderr, "dzm:", err)
+			os.Exit(1)
+		}
+	case "health":
+		// For container health checks: is the local server ready?
+		addr := os.Getenv("DZM_LISTEN")
+		if addr == "" {
+			addr = "127.0.0.1:8080"
+		}
+		if strings.HasPrefix(addr, "0.0.0.0:") || strings.HasPrefix(addr, ":") {
+			addr = "127.0.0.1:" + addr[strings.LastIndex(addr, ":")+1:]
+		}
+		c := &http.Client{Timeout: 4 * time.Second}
+		resp, err := c.Get("http://" + addr + "/ready")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dzm: not ready:", err)
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			fmt.Fprintln(os.Stderr, "dzm: not ready: HTTP", resp.StatusCode)
+			os.Exit(1)
+		}
+	case "map":
+		if err := mapCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "dzm map:", err)
 			os.Exit(1)
 		}
 	case "check-config":
@@ -52,7 +82,136 @@ func usage() {
 commands:
   serve         run the HTTP server (applies DB migrations first)
   version       print the version
-  check-config  validate environment, data directory and Authentik discovery`)
+  check-config  validate environment, data directory and OIDC discovery
+  health        exit 0 if the local server answers /ready (container health checks)
+  map list      list the terrain maps on dzhosts.com
+  map install   install map tiles for a world:
+                  dzm map install --world chernarusplus            (best size from dzhosts.com)
+                  dzm map install --world enoch --slug livonia --px 7616
+                  dzm map install --world namalsk --file namalsk.png   (made with dayz-terrain-map)
+                uses DZM_DATA_DIR (default /var/lib/dzm) and DZM_MAP_MAX_PX (default 10000)`)
+}
+
+func mapCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("use 'dzm map list' or 'dzm map install'")
+	}
+	dataDir := os.Getenv("DZM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/var/lib/dzm"
+	}
+	maxPx := 10000
+	if v := os.Getenv("DZM_MAP_MAX_PX"); v != "" {
+		if _, err := fmt.Sscan(v, &maxPx); err != nil {
+			return errors.New("DZM_MAP_MAX_PX must be a number")
+		}
+	}
+	svc := &worldmap.Service{DataDir: dataDir, MaxPx: maxPx}
+	svc.Init()
+	ctx := context.Background()
+	fs := flag.NewFlagSet("map "+args[0], flag.ContinueOnError)
+	world := fs.String("world", worldmap.DefaultWorld, "CfgWorlds name of the map (chernarusplus, enoch, sakhal, namalsk…)")
+	slug := fs.String("slug", "", "dzhosts.com map name (default: matched from --world)")
+	px := fs.Int("px", 0, "image size in pixels (default: largest within DZM_MAP_MAX_PX)")
+	file := fs.String("file", "", "install a local PNG/JPEG instead of downloading")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		list, err := svc.Sources(ctx, true)
+		if err != nil {
+			return err
+		}
+		for _, s := range list {
+			fmt.Printf("%-16s %-9s %s\n", s.Slug, s.Group, s.Label)
+			for _, f := range s.Files {
+				note := ""
+				if !f.Fits {
+					note = "  (over DZM_MAP_MAX_PX)"
+				}
+				fmt.Printf("    %6d px  %6s  %s%s\n", f.Px, f.Size, f.URL, note)
+			}
+		}
+		return nil
+	case "install":
+	default:
+		return fmt.Errorf("unknown map command %q", args[0])
+	}
+	w, ok := worldmap.NormalizeWorld(*world)
+	if !ok {
+		return errors.New("--world must be a CfgWorlds name such as chernarusplus")
+	}
+	progress := func(state string, done, total int) {
+		if total > 0 && (done%100 == 0 || done == total) {
+			fmt.Printf("\r%s %d/%d tiles", state, done, total)
+		} else if total == 0 {
+			fmt.Printf("%s…\n", state)
+		}
+	}
+	src := *file
+	source := "file:" + filepath.Base(*file)
+	if src == "" {
+		list, err := svc.Sources(ctx, true)
+		if err != nil {
+			return err
+		}
+		slugs := []string{}
+		for _, s := range list {
+			slugs = append(slugs, s.Slug)
+		}
+		want := *slug
+		if want == "" {
+			want = worldmap.SuggestSlug(w, slugs)
+			if want == "" {
+				return fmt.Errorf("no dzhosts.com map matches %q; pass --slug (see 'dzm map list') or --file", w)
+			}
+		}
+		var pick *worldmap.SourceFile
+		for _, s := range list {
+			if s.Slug != want {
+				continue
+			}
+			if *px == 0 {
+				if f, ok := s.BestFile(); ok {
+					pick = &f
+				}
+			}
+			for i := range s.Files {
+				if s.Files[i].Px == *px {
+					pick = &s.Files[i]
+				}
+			}
+		}
+		if pick == nil {
+			return fmt.Errorf("no %q image of that size on dzhosts.com (see 'dzm map list')", want)
+		}
+		if pick.Px > maxPx {
+			return fmt.Errorf("%d px is over DZM_MAP_MAX_PX (%d)", pick.Px, maxPx)
+		}
+		tmp, err := os.CreateTemp("", "dzm-map-*.png")
+		if err != nil {
+			return err
+		}
+		tmp.Close()
+		defer os.Remove(tmp.Name())
+		fmt.Println("downloading", pick.URL)
+		if err := worldmap.Download(ctx, svc.HTTP, pick.URL, tmp.Name(), 400<<20, func(done, total int64) {
+			if total > 0 {
+				fmt.Printf("\r%d/%d MB", done>>20, total>>20)
+			}
+		}); err != nil {
+			return err
+		}
+		fmt.Println()
+		src, source = tmp.Name(), "dzhosts:"+strings.TrimSuffix(pick.Name, ".png")
+	}
+	m, err := worldmap.InstallFile(dataDir, w, src, source, maxPx, progress)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\ninstalled %s: zoom 0–%d from %s into %s\n", w, m.MaxZoom, m.Source, worldmap.TerrainDir(dataDir, w))
+	return nil
 }
 
 func logger(level string) *slog.Logger {
@@ -79,11 +238,11 @@ func checkConfig() error {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, cfg.OIDCIssuer+"/.well-known/openid-configuration", nil)
 	if resp, err := http.DefaultClient.Do(req); err != nil {
-		errs = append(errs, fmt.Errorf("authentik discovery: %w", err))
+		errs = append(errs, fmt.Errorf("OIDC discovery: %w", err))
 	} else {
 		resp.Body.Close()
 		if resp.StatusCode != 200 {
-			errs = append(errs, fmt.Errorf("authentik discovery returned HTTP %d", resp.StatusCode))
+			errs = append(errs, fmt.Errorf("OIDC discovery returned HTTP %d", resp.StatusCode))
 		}
 	}
 	return errors.Join(errs...)

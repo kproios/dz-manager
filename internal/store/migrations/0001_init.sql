@@ -43,7 +43,7 @@ CREATE TABLE settings (
 CREATE TABLE server_profiles (
     id                TEXT PRIMARY KEY,      -- stable server_id (UUID), never derived from host
     name              TEXT NOT NULL,
-    provider_kind     TEXT NOT NULL CHECK (provider_kind IN ('selfhosted_architect','vykix','generic')),
+    provider_kind     TEXT NOT NULL CHECK (provider_kind IN ('selfhosted','vykix','generic')),
     active            INTEGER NOT NULL DEFAULT 0,
     archived          INTEGER NOT NULL DEFAULT 0,
     game_host         TEXT NOT NULL DEFAULT '',

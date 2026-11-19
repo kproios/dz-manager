@@ -1,0 +1,14 @@
+.git
+.github
+**/node_modules
+dist
+build
+deploy
+docs
+mod
+*.db
+*.db-wal
+*.db-shm
+.data
+internal/web/dist/*
+!internal/web/dist/placeholder.txt

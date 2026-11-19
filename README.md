@@ -1,21 +1,29 @@
 # DZ Manager
 
-Private, single-owner, GameLabs-style admin console for a DayZ PC server (Chernarus).
-One static Go binary with an embedded React UI and SQLite, behind Cloudflare Tunnel, with login only
-through Authentik.
+Admin console for a DayZ PC server: live map, players, bans, priority queue, restarts, Discord
+feeds, a public API and an MCP server for MCP clients. One static Go binary with an embedded
+React UI and SQLite, login through your OpenID Connect provider (Authentik, Keycloak, Authelia…).
+Works on any map, official or Workshop.
 
 - Architecture: [ADR 0001](docs/adr/0001-architecture.md)
 - Contracts: [host ⇄ release](docs/contracts/host-and-release.md) · [game ingest v1](docs/contracts/ingest-v1.md)
-- Owner guides: [install game-side PBOs and tiles](docs/install-game-side.md) · [providers / VYKIX / migration](docs/providers.md)
+- Guides: [game-side mod and map image](docs/install-game-side.md) · [public API and MCP](docs/api.md) · [Docker](docs/docker.md) · [providers](docs/providers.md)
 - [Development](docs/development.md) · Constitution: issue #1 · Roadmap: issue #2
 
-| Feature | Needs | Issue |
-|---|---|---|
-| Server status, roster, broadcast / PM / kick / lock | RCON + A2S | #15 |
-| Live map: players, vehicles, server performance | MetricZ | #5 |
-| Restart observation + countdowns (provider is the authority) | RCON/A2S | #4 |
-| Event push + command channel | @DZMBridge | #16 |
-| Teleport / give / heal / kill / strip | @DZMBridge | #7 |
-| Active heli crashes, airdrops, rare-item spawns | @DZMBridge | #6 |
-| Player history: sessions, playtime, kills/deaths | @DZMBridge (+ MetricZ presence) | #11 |
-| Bans (BattlEye-enforced) + external list review | RCON | #10 |
+| Feature | Needs |
+|---|---|
+| Server status, roster, broadcast / PM / kick / lock | RCON + A2S |
+| Live map of any map: players, vehicles, events, place names | @DZMBridge + a map image (one click in Settings) |
+| Restart observation + countdowns (your panel or launcher is the authority) | RCON/A2S |
+| Event push + command channel | @DZMBridge |
+| Player actions: teleport / give / heal / kill / strip | @DZMBridge |
+| Vehicle actions: refuel / repair / flip / stop engine / delete | @DZMBridge |
+| Active heli crashes, airdrops, rare-item spawns | @DZMBridge |
+| Player history: sessions, playtime, kills/deaths | @DZMBridge |
+| Bans (BattlEye-enforced), external list review, export to share | RCON |
+| Discord feeds (raids never say where) | – |
+| Public API with scoped keys, MCP server for MCP clients | – |
+
+`@DZMBridge` is a server-side mod with no dependencies (Steam Workshop: "DZ Manager Bridge"). When
+LBmaster mods are loaded it uses them too (notifications, global banlist, territory flags, code
+lock raids); nothing of LBmaster is included.

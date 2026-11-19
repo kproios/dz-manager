@@ -1,25 +1,31 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
-import { api, Marker, MzPlayer, MzVehicle, PlayerProfile } from '../api'
+import { api, Marker, MzPlayer, MzVehicle, PlayerProfile, WorldPlace, WorldResp } from '../api'
 import { useApi, useNow } from '../hooks'
 import { Badge, Confirm, CopyButton, Meter, Seg, steamUrl } from '../ui'
 import { Icon } from '../icons'
-import { ago, fromLatLng, grid, pct, toLatLng, TILE, WORLD } from '../util'
+import { ago, fromLatLng, grid, pct, setWorldSize, toLatLng, TILE, WORLD } from '../util'
 import { groupMarkers, iconLabels, iconSvg, MapIcon, markerIcon, markerTitle, ruleMatches, vehicleIcon, vehicleKinds, VehicleRule } from '../mapIcons'
 import { usePref } from '../prefs'
-import { besides, eventDests, PlayerActions, Target, TpHere, useRunAction } from '../playerActions'
+import { besides, eventDests, PlayerActions, Target, TpHere, useRunAction, VehicleActions } from '../playerActions'
 import { isFresh, useLiveMap } from '../liveMap'
 import { MarkerStore, SyncItem, syncMarkers } from '../mapSync'
 
-const TILE_URL = '/tiles/chernarusplus/topographic/{z}/{x}/{y}.webp'
+const ATTRIBUTION = 'Terrain: <a href="https://github.com/jmhobbs/dayz-terrain-map" target="_blank" rel="noreferrer noopener">dayz-terrain-map</a> · © Bohemia Interactive'
+/** Which place names show at which zoom: towns first, then villages, then the rest. */
+const placeTier = (kind: string) => /capital|city/i.test(kind) ? 1 : /village/i.test(kind) ? 2 : 3
+const zoomBand = (z: number) => z < 2 ? 1 : z < 3.5 ? 2 : 3
+// CfgWorlds types: "Capital", "City", "Village", "Local", "Marine", "Hill", "Camp", "Ruin"…
+// (older maps prefix them with "Name"). Viewpoints and ambient classes are not labels.
+const PLACE_KINDS = /^(Name)?(Capital|CityCapital|City|Village|Local|Marine|Hill|Camp|Ruin|Airport|RailroadStation)$/i
 // What is selected is remembered by id and looked up in the latest data on every
 // update, so the details panel can never show an old position or status. `last` is
 // the final known copy, kept for something that has since left the map.
 type Sel = { kind: 'player'; id: string } | { kind: 'vehicle'; id: string; last: MzVehicle } | { kind: 'event'; key: string; last: Marker; members: Marker[] } | null
 type Shown = { kind: 'player'; id: string } | { kind: 'vehicle'; v: MzVehicle; gone: boolean } | { kind: 'event'; m: Marker; members: Marker[] }
-type Layers = { players: boolean; vehicles: boolean; events: boolean; items: boolean; bases: boolean; deaths: boolean; ended: boolean }
-const defaultLayers: Layers = { players: true, vehicles: true, events: true, items: true, bases: true, deaths: true, ended: false }
-const layerNames: [keyof Layers, string][] = [['players', 'Players'], ['vehicles', 'Vehicles'], ['events', 'Events'], ['items', 'Items'], ['bases', 'Bases'], ['deaths', 'Deaths & raids'], ['ended', 'History']]
+type Layers = { players: boolean; vehicles: boolean; events: boolean; items: boolean; bases: boolean; deaths: boolean; ended: boolean; places: boolean }
+const defaultLayers: Layers = { players: true, vehicles: true, events: true, items: true, bases: true, deaths: true, ended: false, places: true }
+const layerNames: [keyof Layers, string][] = [['players', 'Players'], ['vehicles', 'Vehicles'], ['events', 'Events'], ['items', 'Items'], ['bases', 'Bases'], ['deaths', 'Deaths & raids'], ['places', 'Places'], ['ended', 'History']]
 const HISTORY: [number, string][] = [[1, '1 h'], [6, '6 h'], [24, '24 h'], [72, '3 days'], [168, '7 days']]
 type PendingTp = { target: Target; x: number; z: number; label: string }
 type Found = { key: string; label: string; sub: string; kind: MapIcon | 'player'; go: () => void }
@@ -36,7 +42,21 @@ const clampWorld = (v: number) => Math.max(1, Math.min(WORLD - 1, v))
 const frac = (v: number | undefined, max: number) => v == null || !isFinite(v) ? null : Math.max(0, Math.min(1, v <= 1.0001 ? v : v / max))
 const createMarker = (item: SyncItem) => L.marker(item.latlng, { icon: item.icon(), title: item.title, alt: item.title, keyboard: true, zIndexOffset: item.zIndexOffset ?? 0 })
 
-export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: string; focusKey?: string; focusClass?: string } = {}) {
+type MapProps = { focusId?: string; focusKey?: string; focusClass?: string }
+
+/**
+ * Loads the active world (name, size, place names, installed tiles) and draws
+ * the map for it. The map is rebuilt when the world or its size changes, since
+ * every position depends on the size.
+ */
+export default function MapPage(props: MapProps = {}) {
+  const w = useApi<WorldResp>('/api/map/world', ['world', 'map_install'])
+  const info = w.data?.world
+  if (info) setWorldSize(info.size)
+  return <MapView key={info ? `${info.world}:${info.size}` : 'default'} world={w.data} {...props} />
+}
+
+function MapView({ focusId, focusKey, focusClass, world }: MapProps & { world: WorldResp | null }) {
   const state = useLiveMap()
   const now = useNow(1000)
   const [storedLayersEarly] = usePref<Layers>('map.layers', defaultLayers)
@@ -59,7 +79,10 @@ export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: s
   const [hiddenList, setHiddenList] = usePref<MapIcon[]>('map.hidden', [])
   const [vehicleRules, setVehicleRules] = usePref<VehicleRule[]>('map.vehicleRules', [])
   const hidden = useMemo(() => new Set(hiddenList), [hiddenList.join(',')])
-  const [tilesOk, setTilesOk] = useState<boolean | null>(null)
+  const tileUrl = world?.tile_url
+  const maxNative = world?.tiles?.max_zoom ?? 5
+  const tileLayer = useRef<L.TileLayer | null>(null)
+  const [, setSettingsTab] = usePref('settings.tab', 'server')
   const [cursor, setCursor] = useState('')
   const [pick, setPick] = useState<Target | null>(null)
   const [pending, setPending] = useState<PendingTp | null>(null)
@@ -76,9 +99,11 @@ export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: s
     if (!el.current || map.current) return
     const m = L.map(el.current, { crs: L.CRS.Simple, minZoom: 0, maxZoom: 9, zoomSnap: 0.5, attributionControl: true })
     const bounds = L.latLngBounds([[-TILE, 0], [0, TILE]])
-    L.tileLayer(TILE_URL, { maxNativeZoom: 6, maxZoom: 9, bounds, noWrap: true, tileSize: TILE, attribution: 'Tiles © Xam.nu · DZMap loader (private use)' }).addTo(m)
     m.fitBounds(bounds)
     m.setMaxBounds(bounds.pad(0.2))
+    const band = () => { if (el.current) el.current.dataset.band = String(zoomBand(m.getZoom())) }
+    m.on('zoomend', band)
+    band()
     // Players always draw above every event, vehicle and item icon.
     m.createPane('dzm-players').style.zIndex = '640'
     m.on('mousemove', (e: L.LeafletMouseEvent) => {
@@ -93,14 +118,39 @@ export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: s
       setPick(null)
       setPending({ target: t, x, z, label: `${x.toFixed(0)} / ${z.toFixed(0)} (${grid(x, z)})` })
     })
-    for (const k of ['players', 'vehicles', 'events', 'items', 'bases']) layers.current[k] = L.layerGroup().addTo(m)
+    for (const k of ['places', 'players', 'vehicles', 'events', 'items', 'bases']) layers.current[k] = L.layerGroup().addTo(m)
     map.current = m
-    const img = new Image()
-    img.onload = () => setTilesOk(true)
-    img.onerror = () => setTilesOk(false)
-    img.src = TILE_URL.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0')
-    return () => { m.remove(); map.current = null; layers.current = {}; playerMarkers.current.clear(); vehicleMarkers.current.clear(); eventMarkers.current.clear() }
+    return () => { m.remove(); map.current = null; tileLayer.current = null; layers.current = {}; playerMarkers.current.clear(); vehicleMarkers.current.clear(); eventMarkers.current.clear() }
   }, [])
+
+  // Terrain tiles: swapped in place when a new set is installed.
+  useEffect(() => {
+    const m = map.current
+    if (!m) return
+    tileLayer.current?.remove()
+    tileLayer.current = null
+    if (!tileUrl) return
+    const bounds = L.latLngBounds([[-TILE, 0], [0, TILE]])
+    tileLayer.current = L.tileLayer(tileUrl, { maxNativeZoom: maxNative, maxZoom: 9, bounds, noWrap: true, tileSize: TILE, attribution: ATTRIBUTION }).addTo(m)
+    tileLayer.current.bringToBack()
+  }, [tileUrl, maxNative])
+
+  // Place names from the game's own config, shown by importance as you zoom in.
+  const places = world?.world.places ?? []
+  useEffect(() => {
+    const g = layers.current.places
+    if (!g) return
+    g.clearLayers()
+    if (!show.places) return
+    for (const p of places as WorldPlace[]) {
+      if (!PLACE_KINDS.test(p.kind)) continue
+      const tier = placeTier(p.kind)
+      g.addLayer(L.marker(toLatLng(p.x, p.z), {
+        icon: L.divIcon({ className: `place-label place-${tier}`, html: '', iconSize: [0, 0] }),
+        interactive: false, keyboard: false,
+      }).bindTooltip(tooltip(p.name), { permanent: true, direction: 'center', className: `place place-${tier}${/hill|marine/i.test(p.kind) ? ' place-nature' : ''}`, interactive: false }))
+    }
+  }, [places, show.places])
 
   const data = state.data
   const fresh = isFresh(data, state.lastUpdate.current, now)
@@ -347,7 +397,7 @@ export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: s
   return (
     <div className="mapwrap">
       <div className="mapbar">
-        <strong>Chernarus</strong>
+        <strong title={world ? `${world.world.world}, ${world.world.size} m${world.world.source === 'bridge' ? ', reported by the game server' : world.world.source === 'manual' ? ', set in Settings' : ' (default until the game server reports its map)'}` : undefined}>{world?.world.label ?? 'Map'}</strong>
         {data && (data.available
           ? <Badge state={fresh ? 'ok' : 'stale'} title={fresh ? (live ? `Live positions from the game server every ${data.interval_s || 2} s` : 'Positions from MetricZ every 15 s. Update @DZMBridge for live positions.') : 'No position update is arriving, so this may be out of date.'}>{fresh ? (live ? 'live' : 'slow') : 'stale'} · {age}s</Badge>
           : <Badge state="unconfigured">no position data</Badge>)}
@@ -370,7 +420,7 @@ export default function MapPage({ focusId, focusKey, focusClass }: { focusId?: s
         </span>
         <span className="muted small grow right nowrap">{cursor}</span>
       </div>
-      {tilesOk === false && <div className="warnings">Map tiles are not installed in /var/lib/dzm/tiles/chernarusplus (see docs/install-game-side.md). Markers still work.</div>}
+      {world && !tileUrl && <div className="warnings">No map image is installed for {world.world.label} yet. Download one in <a href="#/settings" onClick={() => setSettingsTab('map')}>Settings → Map &amp; tracking</a>. Markers still work.</div>}
       {data && !data.available && <div className="warnings">{data.reason}</div>}
       {data?.available && !fresh && <div className="warnings" role="status">No position update for {age} s: everything on the map may be out of date. The game server may be restarting, or its connection to DZ Manager is down.</div>}
       {notice && <div className="warnings row" role="status"><span>{notice}</span><button className="small" style={{ marginLeft: 'auto' }} onClick={() => setNotice('')}>Dismiss</button></div>}
@@ -466,6 +516,7 @@ function Inspector({ sel, player, targets, dests, onClose, onPick, onTpHere, veh
               </select>
             </dd>
           </dl>
+          {!sel.gone && <VehicleActions vehicle={sel.v} />}
           <TpHere targets={targets} ended={sel.gone} onGo={(t) => onTpHere(t, { ...sel.v, id: 0, key: '', category: 'custom', started_at: '', status: 'active', source: '', name: sel.v.class } as Marker)} />
         </>
       )}

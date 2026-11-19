@@ -6,6 +6,7 @@ import (
 
 	"github.com/kproios/dz-manager/internal/actions"
 	"github.com/kproios/dz-manager/internal/alert"
+	"github.com/kproios/dz-manager/internal/apikeys"
 	"github.com/kproios/dz-manager/internal/automsg"
 	"github.com/kproios/dz-manager/internal/bans"
 	"github.com/kproios/dz-manager/internal/bridge"
@@ -15,6 +16,7 @@ import (
 	"github.com/kproios/dz-manager/internal/hooks"
 	"github.com/kproios/dz-manager/internal/intel"
 	"github.com/kproios/dz-manager/internal/mapevents"
+	"github.com/kproios/dz-manager/internal/mcp"
 	"github.com/kproios/dz-manager/internal/metricz"
 	"github.com/kproios/dz-manager/internal/players"
 	"github.com/kproios/dz-manager/internal/priority"
@@ -22,6 +24,7 @@ import (
 	"github.com/kproios/dz-manager/internal/rcon"
 	"github.com/kproios/dz-manager/internal/restarts"
 	"github.com/kproios/dz-manager/internal/retention"
+	"github.com/kproios/dz-manager/internal/worldmap"
 )
 
 // registerFeatures wires feature modules (RCON, MetricZ, restarts, bridge…).
@@ -82,8 +85,16 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.MetricZ.RegisterAPI(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "metricz-watch", a.MetricZ.Watch) })
 
-	// #7 mod-backed player actions, #6 map events, #10 bans.
-	(&actions.API{Bridge: a.Bridge, Players: a.Players, Profiles: a.Profiles, Audit: srv.Audit}).Register(srv.API)
+	// World (map name, size, places from the bridge) and terrain map tiles.
+	a.World = &worldmap.Service{DB: a.DB, Profiles: a.Profiles, Audit: srv.Audit, Log: srv.Log, DataDir: a.Cfg.DataDir, MaxPx: a.Cfg.MapMaxPx,
+		Publish: func(kind string, v any) { srv.Hub.Publish(kind, v) }}
+	a.World.Init()
+	a.World.Attach(a.Bridge)
+	a.World.Register(srv.API)
+
+	// #7 mod-backed player and vehicle actions, #6 map events, #10 bans.
+	a.Actions = &actions.API{Bridge: a.Bridge, Players: a.Players, Profiles: a.Profiles, Audit: srv.Audit, WorldSize: a.World.Size}
+	a.Actions.Register(srv.API)
 	a.MapEvents = &mapevents.Service{DB: a.DB, Profiles: a.Profiles, Audit: srv.Audit, Log: srv.Log,
 		Publish: func() { srv.Hub.Publish("map_events", map[string]bool{"changed": true}) }}
 	a.MapEvents.Attach(a.Bridge)
@@ -122,15 +133,21 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.Hooks = &hooks.Bus{}
 	a.Bans.Hooks = a.Hooks
 	a.Restarts.Hooks = a.Hooks
-	(&feeds.Feeds{DB: a.DB, Bus: a.Hooks}).Attach(a.Bridge)
+	(&feeds.Feeds{DB: a.DB, Bus: a.Hooks, WorldLabel: a.World.Label}).Attach(a.Bridge)
 	a.Discord = &discord.Service{DB: a.DB, Box: a.Box, Audit: srv.Audit, Log: srv.Log}
 	a.Discord.Init()
 	a.Discord.Register(srv.API)
 	a.Hooks.Subscribe(a.Discord.OnEvent)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "discord", a.Discord.Run) })
-	bot := &publicapi.API{DB: a.DB, Box: a.Box, Audit: srv.Audit, Bus: a.Hooks, Status: a.publicStatus, Online: a.onlineNames}
+	// API keys, the public API (/public/v1) and the MCP server (/mcp).
+	a.Keys = &apikeys.Store{DB: a.DB, Box: a.Box, Audit: srv.Audit}
+	a.Keys.MigrateBotToken(ctx)
+	a.Keys.RegisterAdmin(srv.API)
+	bot := &publicapi.API{DB: a.DB, Audit: srv.Audit, Bus: a.Hooks, Keys: a.Keys, Status: a.publicStatus, Online: a.onlineNames,
+		Map: a.liveMap, Actions: a.Actions, Notify: a.notify, Version: srv.Version}
 	bot.RegisterAdmin(srv.API)
 	bot.RegisterPublic(srv.Public)
+	srv.MCP = &mcp.Server{Keys: a.Keys, API: srv.Public, Version: srv.Version, Log: srv.Log}
 
 	// Data retention with compressed archives. (The SSH emergency kill was
 	// removed: VYKIX gives no SSH and RCON cannot stop a frozen process.)

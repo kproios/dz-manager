@@ -1,7 +1,7 @@
 # Third-party components
 
-DZ Manager is private, single-owner software. It includes or links the following
-open-source components; their licenses are honoured and notices kept here.
+DZ Manager includes or links the following open-source components; their licenses are
+honoured and notices kept here. It contains no proprietary third-party code.
 
 ## Linked into the `dzm` binary (Go)
 | Module | License | Use |
@@ -30,7 +30,10 @@ The full notice ships inside the mod as `LICENSE-THIRD-PARTY.txt`.
 ## Used but not included
 - **MetricZ** (GPL-3.0) runs as a separate, unmodified upstream server-side mod; DZ Manager
   implements its own receiver for MetricZ's documented HTTP push protocol.
-- **DZMap** loader (MIT) is run by the operator to fetch map tiles; tile imagery is
-  third-party (xam.nu / iZurvive sources) and used privately only, never redistributed.
-- **CFTools GameLabs** plugin (all rights reserved) was used as a behaviour reference only. No code copied.
+- **Map images**: the operator downloads a terrain image from tools.dzhosts.com (rendered from
+  the game's terrain textures by **dayz-terrain-map**, MIT, https://github.com/jmhobbs/dayz-terrain-map)
+  or renders one from their own game files; DZ Manager tiles it on their server. No image is in
+  this repository or in any release. DayZ terrain © Bohemia Interactive.
+- **LBmaster** mods (paid, all rights reserved): @DZMBridge calls their public script API at
+  runtime when they are loaded (`#ifdef` guarded). No LBmaster code or files are included.
 - **LogZ** and **metricz-exporter** (GPL/AGPL) were read to understand formats only. No code copied.

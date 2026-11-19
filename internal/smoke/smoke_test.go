@@ -118,7 +118,7 @@ func TestSmoke(t *testing.T) {
 	resp, _ = c.Get(url + "/api/me")
 	json.NewDecoder(resp.Body).Decode(&me)
 	resp.Body.Close()
-	req, _ := http.NewRequest("POST", url+"/api/profiles", strings.NewReader(`{"name":"TestServer","provider_kind":"selfhosted_architect","game_host":"192.0.2.10"}`))
+	req, _ := http.NewRequest("POST", url+"/api/profiles", strings.NewReader(`{"name":"TestServer","provider_kind":"selfhosted","game_host":"192.0.2.10"}`))
 	req.Header.Set("Origin", url)
 	req.Header.Set("X-DZM-CSRF", me.CSRF)
 	resp, _ = c.Do(req)

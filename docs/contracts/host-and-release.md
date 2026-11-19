@@ -34,7 +34,7 @@ adding protection.
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `DZM_LISTEN` | no | `127.0.0.1:8080` | Listener. Must stay on loopback. Ingress is only through cloudflared. |
+| `DZM_LISTEN` | no | `127.0.0.1:8080` | Listener. Must stay on loopback (except in the Docker image). Ingress is only through a tunnel or reverse proxy. |
 | `DZM_DATA_DIR` | no | `/var/lib/dzm` | SQLite DB, tiles, backups, updater status. |
 | `DZM_SECRET_KEY` | **yes** | – | 32-byte base64 key that encrypts stored game-server secrets (RCON password, ingest tokens) at rest. Missing or invalid key: refuse to start. **The owner keeps a copy in their password manager, because a DB backup is useless without it.** |
 | `DZM_PUBLIC_URL` | yes | – | `https://dzm.example.com`. Used for the OIDC redirect URI (`<url>/auth/callback`), cookie scope and CSRF origin checks. |
@@ -46,6 +46,8 @@ adding protection.
 | `DZM_TZ` | no | `Europe/Athens` | Display and schedule timezone. Everything is stored in UTC. |
 | `DZM_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. JSON logs go to stdout (journald). |
 | `DZM_ALERT_WEBHOOK` | no | – | Optional ntfy/Discord-compatible URL for operational alerts. |
+| `DZM_MAP_MAX_PX` | no | `10000` | Largest map image (pixels per side) the server will tile. Tiling needs about 4 bytes per pixel of memory (7616 px ≈ 500 MB peak). 1024–20000. |
+| `DZM_CONTAINER` | no | – | `1` only in the official Docker image: allows `DZM_LISTEN` on all interfaces inside the container (the host publishes the port, normally on loopback). |
 
 Game-server connection details (host, ports, RCON password, ingest tokens) are **not** environment
 variables. They are server profiles configured in the UI and stored encrypted in the DB, so

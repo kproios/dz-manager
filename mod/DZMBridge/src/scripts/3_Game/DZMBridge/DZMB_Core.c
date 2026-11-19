@@ -2,7 +2,7 @@
 // HTTP wrapper adapted from DayZ-Takaro-Integration (MIT). DayZ RestContext
 // cannot send custom headers reliably, so the server token travels in the URL path.
 
-const string DZMB_VERSION = "0.1.11";
+const string DZMB_VERSION = "0.2.0";
 const string DZMB_DIR = "$profile:DZMBridge";
 const string DZMB_CONFIG = "$profile:DZMBridge/config.json";
 
@@ -19,6 +19,11 @@ class DZMB_ConfigData
 	int live_seconds = 2;
 	int max_queue = 500;
 	string log_level = "info";
+	// LBmaster's notifications, banlist, territory flags and code lock raids
+	// are used when those mods are loaded. Set true to ignore LBmaster. (A
+	// "disable" flag, because a field missing from an older config.json loads
+	// as false.)
+	bool disable_lbmaster = false;
 	ref map<string, string> event_classes = new map<string, string>;
 	ref array<string> rare_items = new array<string>;
 }
