@@ -465,3 +465,6 @@ img.qr { display: block; margin: 4px auto; border-radius: 8px; background: #fff;
 .me a.who { display: block; color: var(--text); }
 .me a.who:hover, .me a.who.active { color: var(--accent); text-decoration: none; }
 .signin button.link { align-self: flex-start; background: none; border: 0; height: auto; padding: 0; }
+.enroll-key { display: flex; flex-direction: column; gap: 6px; background: #0a0d10; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.enroll-key p { margin: 0; }
+.enroll-key .id-line > span:first-child { min-width: 70px; color: var(--muted); }

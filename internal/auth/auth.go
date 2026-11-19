@@ -31,7 +31,7 @@ const (
 
 	absoluteTTL = 12 * time.Hour
 	idleTTL     = 2 * time.Hour
-	pendingTTL  = 10 * time.Minute
+	pendingTTL  = 15 * time.Minute // between the first factor and 2FA (setting up an app by hand takes a while)
 	flowTTL     = 10 * time.Minute
 	// StepUpTTL is how long a 2FA confirmation unlocks sensitive routes.
 	StepUpTTL = 10 * time.Minute
