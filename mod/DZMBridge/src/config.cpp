@@ -21,7 +21,7 @@ class CfgMods
         credits = "Contains code adapted from DayZ-Takaro-Integration (MIT, mad-001)";
         author = "kproios";
         authorID = "0";
-        version = "0.2.0";
+        version = "0.2.1";
         extra = 0;
         dependencies[] = {"Game", "World", "Mission"};
 
