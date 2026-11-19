@@ -102,22 +102,33 @@ func (s *Service) driveVerified(ctx context.Context, serverID string) bool {
 }
 
 func (s *Service) refreshCaps(ctx context.Context, sc Schedule) {
+	week := s.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
 	if !sc.Enabled {
 		s.Caps.Set(sc.ServerID, caps.ProviderSchedule, caps.Unconfigured, "no restart schedule mirrored")
 	} else {
+		// Planned restarts and "Restart now" both prove the server comes back.
 		var n int
-		_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM restart_events WHERE server_id=? AND kind='planned' AND outcome IN ('ok','recovered_late') AND down_at > ?`,
-			sc.ServerID, s.Now().UTC().Add(-7*24*time.Hour).Format(time.RFC3339)).Scan(&n)
+		_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM restart_events WHERE server_id=? AND kind IN ('planned','manual') AND outcome IN ('ok','recovered_late') AND down_at > ?`,
+			sc.ServerID, week).Scan(&n)
 		if n > 0 {
-			s.Caps.Set(sc.ServerID, caps.ProviderSchedule, caps.OK, fmt.Sprintf("%d planned restart(s) observed in the last 7 days", n))
+			s.Caps.Set(sc.ServerID, caps.ProviderSchedule, caps.OK, fmt.Sprintf("%d restart(s) observed coming back in the last 7 days", n))
 		} else {
-			s.Caps.Set(sc.ServerID, caps.ProviderSchedule, caps.Unverified, "schedule mirrored; no planned restart observed yet")
+			s.Caps.Set(sc.ServerID, caps.ProviderSchedule, caps.Unverified, "schedule mirrored; no restart observed coming back yet")
+		}
+	}
+	// A shutdown DZ Manager requested that came back on its own is proof the
+	// provider relaunches a cleanly exited server: record it once.
+	if !s.driveVerified(ctx, sc.ServerID) {
+		var back int
+		_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM restart_events WHERE server_id=? AND kind='manual' AND outcome IN ('ok','recovered_late')`, sc.ServerID).Scan(&back)
+		if back > 0 {
+			_, _ = s.DB.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?, 'true') ON CONFLICT(key) DO UPDATE SET value='true'`, "restart_drive_verified:"+sc.ServerID)
 		}
 	}
 	if s.driveVerified(ctx, sc.ServerID) {
-		s.Caps.Set(sc.ServerID, caps.RestartDrive, caps.OK, "owner verified the provider restarts a cleanly exited server")
+		s.Caps.Set(sc.ServerID, caps.RestartDrive, caps.OK, "verified: the provider starts the server again after DZ Manager's graceful shutdown")
 	} else {
-		s.Caps.Set(sc.ServerID, caps.RestartDrive, caps.Unsupported, "not verified: provider must auto-restart after a clean #shutdown")
+		s.Caps.Set(sc.ServerID, caps.RestartDrive, caps.Unsupported, "not verified yet: use Restart now once; when the server comes back by itself this is verified")
 	}
 }
 
