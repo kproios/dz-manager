@@ -98,7 +98,9 @@ export default function Restarts() {
           </> : <p className="muted">No schedule enabled.</p>}
           <Timeline sc={sc} />
           <p className="hint">{sc.mode === 'drive' ? sc.dry_run ? 'Simulation only — DZ Manager logs what it would do and sends no restart.' : 'DZ Manager sends a graceful shutdown; the provider starts the server again.' : 'Your provider restarts the server; DZ Manager announces, locks, kicks and checks it came back.'}
-            {' '}<Badge state={r.data.provider_schedule.state} title={r.data.provider_schedule.reason} /></p>
+            {' '}{sc.mode === 'drive' && !sc.dry_run
+              ? <Badge state={r.data.restart_drive.state} title={r.data.restart_drive.reason} />
+              : <Badge state={r.data.provider_schedule.state} title={r.data.provider_schedule.reason} />}</p>
         </Card>
         <Card title="Restart history" actions={<span className="muted small">last {Math.min(r.data.events.length, 20)}</span>}>
           <Bars color="var(--series-3)" unit=" min" fmt={(v) => (Math.round(v * 10) / 10).toString()}

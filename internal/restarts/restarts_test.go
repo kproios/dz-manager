@@ -2,6 +2,7 @@ package restarts_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -342,6 +343,35 @@ func TestDetectorPlannedUnplannedNotBack(t *testing.T) {
 	}
 	if !e.App.Caps.OK(id, "provider.schedule") {
 		t.Fatalf("provider.schedule should be ok after an observed planned restart: %+v", e.App.Caps.Get(id, "provider.schedule"))
+	}
+}
+
+// A "Restart now" that comes back on its own proves the provider relaunches a
+// cleanly exited server: both restart badges turn ok without a manual flag.
+func TestManualRestartVerifiesDrive(t *testing.T) {
+	e, svc, c, _, id := setup(t)
+	ctx := context.Background()
+	sc := sched("12:00")
+	sc.ServerID = id
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	if e.App.Caps.OK(id, "restart.drive") {
+		t.Fatal("restart.drive ok before any evidence")
+	}
+	at := time.Date(2026, 11, 4, 15, 0, 0, 0, athens)
+	e.App.DB.Exec(`INSERT INTO settings(key,value) VALUES(?,?)`, "restart_now_until:"+id, fmt.Sprint(at.Add(5*time.Minute).Unix()))
+	obs := func(t time.Time, online bool) { c.set(t); svc.Observe(ctx, id, online) }
+	obs(at, true)
+	obs(at.Add(time.Minute), false)
+	obs(at.Add(time.Minute+10*time.Second), false)
+	obs(at.Add(3*time.Minute), true)
+	evs, _ := svc.Events(ctx, id, 10)
+	if len(evs) != 1 || evs[0].Kind != "manual" || evs[0].Outcome != "ok" {
+		t.Fatalf("events: %+v", evs)
+	}
+	if !e.App.Caps.OK(id, "restart.drive") || !e.App.Caps.OK(id, "provider.schedule") {
+		t.Fatalf("caps: drive %+v, schedule %+v", e.App.Caps.Get(id, "restart.drive"), e.App.Caps.Get(id, "provider.schedule"))
 	}
 }
 
