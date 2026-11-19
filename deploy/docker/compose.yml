@@ -1,0 +1,24 @@
+# DZ Manager with Docker Compose. Copy this folder, fill in dzm.env (see
+# dzm.env.example), then: docker compose up -d
+# The panel listens on 127.0.0.1:8080 on the host: put your reverse proxy or
+# tunnel in front of it (HTTPS is required for anything but localhost).
+services:
+  dzm:
+    build: ../..            # or: image: <your registry>/dz-manager:<version>
+    restart: unless-stopped
+    env_file: dzm.env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - dzm-data:/data
+    # Tiling a large map image needs about 500 MB for a moment.
+    mem_limit: 1g
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  dzm-data:

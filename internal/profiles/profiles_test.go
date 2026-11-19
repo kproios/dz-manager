@@ -11,7 +11,7 @@ func TestProfileLifecycle(t *testing.T) {
 	e := apptest.New(t, "")
 	e.Login()
 	var a, b profiles.Profile
-	if code := e.JSON("POST", "/api/profiles", profiles.Input{Name: "TestServer", ProviderKind: profiles.SelfhostedArchitect, GameHost: "192.0.2.10", RconPassword: "pw1"}, &a); code != 201 {
+	if code := e.JSON("POST", "/api/profiles", profiles.Input{Name: "TestServer", ProviderKind: profiles.Selfhosted, GameHost: "192.0.2.10", RconPassword: "pw1"}, &a); code != 201 {
 		t.Fatalf("create = %d", code)
 	}
 	if !a.Active || !a.HasRconPassword || a.RconPort != 2305 || a.QueryPort != 27016 {
@@ -23,7 +23,7 @@ func TestProfileLifecycle(t *testing.T) {
 	}
 	// Endpoint change keeps server_id and the stored password.
 	var upd profiles.Profile
-	e.JSON("PUT", "/api/profiles/"+a.ID, profiles.Input{Name: "TestServer", ProviderKind: profiles.SelfhostedArchitect, GameHost: "192.0.2.20"}, &upd)
+	e.JSON("PUT", "/api/profiles/"+a.ID, profiles.Input{Name: "TestServer", ProviderKind: profiles.Selfhosted, GameHost: "192.0.2.20"}, &upd)
 	if upd.ID != a.ID || upd.GameHost != "192.0.2.20" || !upd.HasRconPassword {
 		t.Fatalf("update: %+v", upd)
 	}
@@ -34,7 +34,7 @@ func TestProfileLifecycle(t *testing.T) {
 	// The Edit form sends exactly these keys; a read-only field is refused.
 	form := map[string]any{
 		"name":          "TestServer",
-		"provider_kind": profiles.SelfhostedArchitect,
+		"provider_kind": profiles.Selfhosted,
 		"game_host":     "10.0.0.201",
 		"game_port":     2302,
 		"query_host":    "",

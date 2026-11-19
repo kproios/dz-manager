@@ -86,7 +86,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, 200, map[string]any{"entries": es,
-		"note": "DZ Manager does not apply priority: copy the export into the provider (Architect / host panel) and tick 'applied'."})
+		"note": "DZ Manager does not apply priority: copy the export into your server panel or queue tool (or read it from the API) and tick 'applied'."})
 }
 
 func (a *API) add(w http.ResponseWriter, r *http.Request) {

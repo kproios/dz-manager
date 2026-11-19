@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, fmtDuration, fromLatLng, grid, pct, toLatLng, WORLD } from './util'
+import { ago, fmtDuration, fromLatLng, grid, pct, setWorldSize, toLatLng, WORLD } from './util'
 
 describe('coordinates', () => {
   it('maps the map corners onto the zoom-0 tile', () => {
@@ -17,6 +17,19 @@ describe('coordinates', () => {
   })
   it('formats grid references', () => {
     expect(grid(6560, 15360 - 12650)).toBe('065 126')
+  })
+  it('follows the active world size (Livonia is 12800 m)', () => {
+    setWorldSize(12800)
+    try {
+      expect(WORLD).toBe(12800)
+      expect(toLatLng(12800, 12800)).toEqual([0, 256])
+      expect(toLatLng(6400, 6400)).toEqual([-128, 128])
+      expect(grid(100, 12800 - 200)).toBe('001 002')
+      setWorldSize(NaN) // ignored
+      expect(WORLD).toBe(12800)
+    } finally {
+      setWorldSize(15360)
+    }
   })
 })
 

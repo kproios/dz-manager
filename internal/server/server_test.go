@@ -69,7 +69,7 @@ func TestLoginFlowAndCSRF(t *testing.T) {
 	if resp.StatusCode != 403 {
 		t.Fatalf("cross-origin = %d, want 403", resp.StatusCode)
 	}
-	if code := e.JSON("POST", "/api/profiles", profiles.Input{Name: "TestServer", ProviderKind: "selfhosted_architect", GameHost: "192.0.2.10"}, nil); code != 201 {
+	if code := e.JSON("POST", "/api/profiles", profiles.Input{Name: "TestServer", ProviderKind: "selfhosted", GameHost: "192.0.2.10"}, nil); code != 201 {
 		t.Fatalf("create profile = %d", code)
 	}
 	var log []audit.Entry

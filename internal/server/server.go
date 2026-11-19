@@ -41,8 +41,11 @@ type Server struct {
 	API *http.ServeMux
 	// Ingest is the unauthenticated-by-session mux for game traffic; each handler authenticates the server itself.
 	Ingest *http.ServeMux
-	// Public is the read-only bot API (/public/v1); handlers check the bot token.
+	// Public is the API for websites, bots and other servers (/public/v1);
+	// handlers check an API key and its scope.
 	Public *http.ServeMux
+	// MCP is the Model Context Protocol endpoint (/mcp), if enabled.
+	MCP http.Handler
 
 	ready   atomic.Bool
 	started time.Time
@@ -103,13 +106,34 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("POST /auth/logout", s.Auth.OptionalUser(http.HandlerFunc(s.Auth.Logout)))
 	root.Handle("/api/", s.Auth.RequireAPI(s.API))
 	root.Handle("/ingest/", s.limiter.wrap(http.MaxBytesHandler(s.Ingest, 4<<20)))
-	root.Handle("/public/", s.limiter.wrap(http.MaxBytesHandler(s.Public, 64<<10)))
+	root.Handle("/public/", s.limiter.wrap(http.MaxBytesHandler(publicCORS(s.Public), 64<<10)))
+	if s.MCP != nil {
+		root.Handle("/mcp", s.limiter.wrap(http.MaxBytesHandler(s.MCP, 256<<10)))
+	}
 
 	static := http.FileServerFS(web.FS())
 	root.Handle("GET /assets/", static)
 	root.Handle("GET /tiles/", s.Auth.RequireAPI(http.StripPrefix("/tiles/", http.FileServer(http.Dir(filepath.Join(s.Cfg.DataDir, "tiles"))))))
 	root.Handle("/", s.Auth.RequirePage(http.HandlerFunc(s.spa)))
 	return s.securityHeaders(s.logRequests(root))
+}
+
+// publicCORS lets websites call the public API from a browser with an
+// Authorization header (no cookies are involved). The panel's own API never
+// sends CORS headers.
+func publicCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hd := w.Header()
+		hd.Set("Access-Control-Allow-Origin", "*")
+		hd.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		hd.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		hd.Set("Access-Control-Max-Age", "600")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) spa(w http.ResponseWriter, r *http.Request) {

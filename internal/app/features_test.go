@@ -197,7 +197,7 @@ func TestBans(t *testing.T) {
 	guid := dzid.BattlEyeString(76561198000000001)
 	e.send(ev("c1", "player.connect", now, steamA, nil, map[string]any{"name": "Alice"}))
 	e.be.SetPlayers("Players on server:\n[#] [IP Address]:[Port] [Ping] [GUID] [Name]\n--------------------------------------------------\n4  127.0.0.1:2302 42 " + guid + "(OK) Alice\n(1 players in total)")
-	e.be.AddForeignBan(strings.Repeat("ab", 16), "cftools ban")
+	e.be.AddForeignBan(strings.Repeat("ab", 16), "external list ban")
 
 	var b bans.Ban
 	if code := e.JSON("POST", "/api/bans", map[string]any{"steam64": steamA, "reason": "cheating", "minutes": 0}, &b); code != 201 || b.BEGUID != guid || b.Applied != "ok" {

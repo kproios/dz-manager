@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,6 +23,11 @@ type Config struct {
 	LogLevel        string
 	AlertWebhook    string
 	SecretKey       []byte
+	// MapMaxPx is the largest map image (px per side) the server will tile.
+	MapMaxPx int
+	// Container is set by the official Docker image: the process listens on
+	// all interfaces inside the container and the host publishes the port.
+	Container bool
 
 	OIDCIssuer       string
 	OIDCClientID     string
@@ -58,11 +64,21 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		OIDCAdminGroup:   get("DZM_OIDC_ADMIN_GROUP", "dzm-admins"),
 	}
 
+	c.Container = get("DZM_CONTAINER", "") == "1"
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("DZM_LISTEN: %w", err))
-	} else if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		errs = append(errs, errors.New("DZM_LISTEN must be a loopback address (ingress is only via cloudflared)"))
+	} else if ip := net.ParseIP(host); !c.Container && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		errs = append(errs, errors.New("DZM_LISTEN must be a loopback address (put a reverse proxy or tunnel in front; the Docker image sets DZM_CONTAINER=1)"))
+	}
+
+	c.MapMaxPx = 10000
+	if v := get("DZM_MAP_MAX_PX", ""); v != "" {
+		if n, err := strconv.Atoi(v); err != nil || n < 1024 || n > 20000 {
+			errs = append(errs, errors.New("DZM_MAP_MAX_PX must be a number of pixels between 1024 and 20000"))
+		} else {
+			c.MapMaxPx = n
+		}
 	}
 
 	switch c.LogLevel {
@@ -84,7 +100,7 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	c.IngestPublicURL = parseURL("DZM_INGEST_PUBLIC_URL", get("DZM_INGEST_PUBLIC_URL", ""), &errs)
 
 	if c.OIDCIssuer == "" || c.OIDCClientID == "" || c.OIDCClientSecret == "" {
-		errs = append(errs, errors.New("DZM_OIDC_ISSUER, DZM_OIDC_CLIENT_ID and DZM_OIDC_CLIENT_SECRET are required (login is SSO-only)"))
+		errs = append(errs, errors.New("DZM_OIDC_ISSUER, DZM_OIDC_CLIENT_ID and DZM_OIDC_CLIENT_SECRET are required (login is through your OpenID Connect provider, e.g. SSO, Keycloak, Authelia)"))
 	} else if u, err := url.Parse(c.OIDCIssuer); err != nil || u.Host == "" || (u.Scheme != "https" && !isLoopbackHost(u.Hostname())) {
 		errs = append(errs, errors.New("DZM_OIDC_ISSUER must be an https URL"))
 	}

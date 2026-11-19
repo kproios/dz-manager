@@ -5,15 +5,15 @@ import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, P
 import { Icon } from '../icons'
 import { ago } from '../util'
 import { useNotify } from '../App'
-import { AutoMessages, BotApi, DiscordChannels, PlayerChecks, Retention } from './SettingsExtra'
+import { ApiKeys, AutoMessages, BotInfo, DiscordChannels, PlayerChecks, Retention } from './SettingsExtra'
 import { MapTrackingSettings } from './SettingsMap'
 import { usePref } from '../prefs'
 import { IconName } from '../icons'
 
-const blank = { name: '', provider_kind: 'selfhosted_architect', game_host: '', game_port: 2302, query_host: '', query_port: 27016, rcon_host: '', rcon_port: 2305, rcon_password: '' }
+const blank = { name: '', provider_kind: 'selfhosted', game_host: '', game_port: 2302, query_host: '', query_port: 27016, rcon_host: '', rcon_port: 2305, rcon_password: '' }
 type Edit = typeof blank & { id?: string }
 const PROVIDERS: [string, string, string][] = [
-  ['selfhosted_architect', 'Self-hosted (CFTools Architect)', 'Your own machine or VM managed by Architect.'],
+  ['selfhosted', 'Self-hosted', 'Your own machine or VM, started by your own scripts or panel.'],
   ['managed', 'Managed host panel', 'No SSH or files: everything goes through RCON and the bridge.'],
   ['generic', 'Other host', 'Any other provider with RCON access.'],
 ]
@@ -48,7 +48,7 @@ const TABS: [SettingsTab, string, IconName, string][] = [
   ['players', 'Players', 'players', 'Player checks and priority queue'],
   ['map', 'Map & tracking', 'map', 'Tracked events, items and vehicle icons'],
   ['messages', 'Messages', 'megaphone', 'Welcome and rotating messages'],
-  ['integrations', 'Integrations', 'send', 'Discord channels and bot API'],
+  ['integrations', 'Integrations', 'send', 'API keys, MCP clients (MCP), Discord'],
   ['data', 'Data', 'audit', 'Retention and archives'],
 ]
 
@@ -145,7 +145,7 @@ export default function Settings() {
       {tab === 'players' && <><PlayerChecks /><PriorityQueue /></>}
       {tab === 'map' && <MapTrackingSettings bridge={b} />}
       {tab === 'messages' && <AutoMessages />}
-      {tab === 'integrations' && <><DiscordChannels /><BotApi /></>}
+      {tab === 'integrations' && <><ApiKeys /><DiscordChannels /><BotInfo /></>}
       {tab === 'data' && <Retention />}
       {edit && (
         <Confirm title={edit.id ? `Edit ${edit.name || 'server'}` : 'Add a server'} tone="primary" confirmLabel={edit.id ? 'Save changes' : 'Add server'} busy={saving} disabled={Object.keys(errs).length > 0} onClose={() => setEdit(null)} onConfirm={save} body={

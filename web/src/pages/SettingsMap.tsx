@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, Marker } from '../api'
+import { api, MapJob, MapSources, Marker, WorldInfo, WorldResp } from '../api'
 import { useApi, useNow } from '../hooks'
-import { Badge, Card, Empty, ErrorBox, Trunc } from '../ui'
+import { Badge, Card, Empty, ErrorBox, Meter, Trunc } from '../ui'
+import { ago } from '../util'
 import { Icon } from '../icons'
 import { useNotify } from '../App'
 import { usePref } from '../prefs'
@@ -28,10 +29,140 @@ export function MapTrackingSettings({ bridge }: { bridge: any }) {
   const events = useApi<Marker[]>('/api/map/events', ['map_events'], 30000)
   const active = useMemo(() => (events.data ?? []).filter((m) => m.status === 'active'), [events.data])
   return <>
+    <MapImage />
     <MapStatus live={live} bridge={bridge} tracking={tracking.data} active={active} />
     <VehicleIcons vehicles={live.data?.vehicles ?? []} />
     <TrackedThings tracking={tracking} active={active} invalid={bridge?.info?.tracking_invalid || []} />
   </>
+}
+
+const BUSY = ['downloading', 'decoding', 'tiling']
+const KNOWN_WORLDS: [string, string, number][] = [['chernarusplus', 'Chernarus', 15360], ['enoch', 'Livonia', 12800], ['namalsk', 'Namalsk', 12800]]
+
+/** Which map this server runs, and the terrain image drawn under the markers. */
+function MapImage() {
+  const w = useApi<WorldResp>('/api/map/world', ['world', 'map_install'])
+  const [running, setRunning] = useState(false)
+  const job = useApi<MapJob>('/api/map/install', ['map_install'], running ? 2000 : 0)
+  const [sources, setSources] = useState<MapSources | null>(null)
+  const [srcError, setSrcError] = useState('')
+  const [slug, setSlug] = useState('')
+  const [url, setUrl] = useState('')
+  const [starting, setStarting] = useState(false)
+  const notify = useNotify()
+  const info = w.data?.world
+  const tiles = w.data?.tiles
+  const busy = !!job.data && BUSY.includes(job.data.state)
+  useEffect(() => { setRunning(busy) }, [busy])
+  const prevState = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const s = job.data?.state
+    if (prevState.current && BUSY.includes(prevState.current) && s === 'done') { notify('Map image installed'); w.reload() }
+    if (prevState.current && BUSY.includes(prevState.current) && s === 'error') notify('Map install failed: ' + job.data?.error, 'bad')
+    prevState.current = s
+  }, [job.data?.state])
+
+  const loadSources = async (refresh = false) => {
+    setSrcError('')
+    try {
+      const s = await api.get<MapSources>('/api/map/sources' + (refresh ? '?refresh=1' : ''))
+      setSources(s)
+      const pick = s.sources.find((x) => x.slug === (slug || s.suggested))
+      if (pick) {
+        setSlug(pick.slug)
+        const best = [...pick.files].reverse().find((f) => f.fits)
+        if (best && !url) setUrl(best.url)
+      }
+    } catch (e: any) { setSrcError(e.message) }
+  }
+  useEffect(() => { loadSources() }, [])
+  const chosen = sources?.sources.find((x) => x.slug === slug)
+  const pickSlug = (s: string) => {
+    setSlug(s)
+    const src = sources?.sources.find((x) => x.slug === s)
+    const best = src ? [...src.files].reverse().find((f) => f.fits) : undefined
+    setUrl(best?.url ?? '')
+  }
+  const install = async () => {
+    setStarting(true)
+    try { await api.post('/api/map/install', { url }); setRunning(true); job.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setStarting(false) }
+  }
+  const mismatch = !!sources?.suggested && !!slug && slug !== sources.suggested
+  const j = job.data
+  return (
+    <Card title={<><Icon name="map" />Map image</>}>
+      <dl className="status-list">
+        <dt>Map</dt>
+        <dd>{!info ? '…' : <>
+          <b>{info.label}</b> <span className="muted small">{info.world} · {info.size.toLocaleString()} m · {info.places.length} place names</span>{' '}
+          {info.source === 'bridge' ? <Badge state="ok">reported by the game server</Badge>
+            : info.source === 'manual' ? <Badge state="warn">set by hand</Badge>
+              : <Badge state="unconfigured">default</Badge>}
+        </>}</dd>
+        <dt>Installed image</dt>
+        <dd>{!w.data ? '…' : tiles
+          ? <span>{tiles.source.replace(/^dzhosts:/, 'dzhosts.com ').replace(/^file:/, 'file ')} · {tiles.source_px.toLocaleString()} px · zoom 0–{tiles.max_zoom} · <span className="muted">{ago(tiles.installed_at)}</span></span>
+          : <Badge state="warn">none for this map</Badge>}</dd>
+      </dl>
+      {info && info.source !== 'bridge' && <WorldByHand info={info} onSaved={w.reload} />}
+      <h4>Download a map image</h4>
+      <p className="hint">Images of the terrain rendered from DayZ's own textures by <a href="https://github.com/jmhobbs/dayz-terrain-map" target="_blank" rel="noreferrer noopener">dayz-terrain-map</a> and published at <a href={sources?.list_url || 'https://tools.dzhosts.com/maps/'} target="_blank" rel="noreferrer noopener">tools.dzhosts.com/maps</a>. DZ Manager downloads the image, cuts it into map tiles on this server and deletes the download.</p>
+      <ErrorBox error={srcError || null} />
+      <div className="row wrap">
+        <label className="field">Map
+          <select value={slug} onChange={(e) => pickSlug(e.target.value)} disabled={!sources || busy}>
+            <option value="">{sources ? 'Choose…' : 'Loading the list…'}</option>
+            {['Official', 'Workshop'].map((g) => <optgroup key={g} label={g}>{sources?.sources.filter((s) => s.group === g).map((s) => <option key={s.slug} value={s.slug}>{s.label}{s.slug === sources.suggested ? ' (this server)' : ''}</option>)}</optgroup>)}
+          </select>
+        </label>
+        <label className="field">Size
+          <select value={url} onChange={(e) => setUrl(e.target.value)} disabled={!chosen || busy}>
+            {chosen?.files.map((f) => <option key={f.url} value={f.url} disabled={!f.fits}>{f.px.toLocaleString()} px{f.size ? ` · ${f.size}B` : ''}{f.fits ? '' : ' · too large for this server'}</option>)}
+          </select>
+        </label>
+        <button className="primary" style={{ alignSelf: 'end' }} disabled={!url || busy || starting} onClick={install}><Icon name="refresh" />{tiles ? 'Download and replace' : 'Download and install'}</button>
+        <button className="ghost small" style={{ alignSelf: 'end' }} disabled={busy} onClick={() => loadSources(true)} title="Fetch the list again">Refresh list</button>
+      </div>
+      {mismatch && <p className="warn small">This server runs {info?.label}; the image you picked is for another map. It would be drawn under {info?.label}'s markers.</p>}
+      <p className="hint">Bigger images show more detail when zoomed in but take longer. This server tiles images up to {w.data?.max_px.toLocaleString() ?? '…'} px (DZM_MAP_MAX_PX); 7,000–8,000 px is plenty.</p>
+      {j && j.state !== 'idle' && <div className="map-job" role="status">
+        {j.state === 'downloading' && <><span>Downloading {j.source?.replace(/^dzhosts:/, '')}…</span><Meter value={j.total ? (j.bytes ?? 0) / j.total : null} color="#3987e5" /><span className="muted small">{((j.bytes ?? 0) / 1048576).toFixed(0)}{j.total ? ` / ${(j.total / 1048576).toFixed(0)}` : ''} MB</span></>}
+        {j.state === 'decoding' && <span>Reading the image…</span>}
+        {j.state === 'tiling' && <><span>Cutting tiles…</span><Meter value={j.tiles_total ? (j.tiles ?? 0) / j.tiles_total : null} color="#3ccf7e" /><span className="muted small">{j.tiles ?? 0} / {j.tiles_total ?? '…'}</span></>}
+        {j.state === 'done' && <span><Badge state="ok">installed</Badge> {j.source?.replace(/^dzhosts:/, '')} for {j.world}, {ago(j.finished_at)}</span>}
+        {j.state === 'error' && <span><Badge state="error">failed</Badge> {j.error}</span>}
+      </div>}
+      <p className="hint">Or install from the command line, also with your own PNG made with dayz-terrain-map for a map that is not listed: <code>dzm map install --world namalsk --file namalsk.png</code></p>
+    </Card>
+  )
+}
+
+function WorldByHand({ info, onSaved }: { info: WorldInfo; onSaved: () => void }) {
+  const [world, setWorld] = useState(info.source === 'manual' ? info.world : '')
+  const [size, setSize] = useState(info.source === 'manual' ? String(info.size) : '')
+  const [saving, setSaving] = useState(false)
+  const notify = useNotify()
+  const known = KNOWN_WORLDS.find((k) => k[0] === world.trim().toLowerCase())
+  const n = +size || known?.[2] || 0
+  const ok = /^[a-z0-9_]{1,40}$/i.test(world.trim()) && n >= 1000 && n <= 100000
+  const save = async (clear = false) => {
+    setSaving(true)
+    try { await api.put('/api/map/world', clear ? { world: '' } : { world: world.trim(), size: n }); notify(clear ? 'Back to the default map' : 'Map saved'); onSaved() } catch (e: any) { notify(e.message, 'bad') } finally { setSaving(false) }
+  }
+  return <div className="form">
+    <p className="hint">The game server reports its map through @DZMBridge. Until it does, set it here.</p>
+    <div className="row wrap">
+      <label className="field">World (CfgWorlds name)
+        <input list="dzm-worlds" value={world} placeholder="chernarusplus" onChange={(e) => setWorld(e.target.value)} />
+        <datalist id="dzm-worlds">{KNOWN_WORLDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</datalist>
+      </label>
+      <label className="field">Size in metres
+        <input inputMode="numeric" value={size} placeholder={known ? String(known[2]) : 'e.g. 15360'} onChange={(e) => setSize(e.target.value.replace(/\D/g, ''))} />
+      </label>
+      <button className="small primary" style={{ alignSelf: 'end' }} disabled={!ok || saving} onClick={() => save()}>Save</button>
+      {info.source === 'manual' && <button className="small ghost" style={{ alignSelf: 'end' }} disabled={saving} onClick={() => save(true)}>Clear</button>}
+    </div>
+  </div>
 }
 
 function MapStatus({ live, bridge, tracking, active }: { live: ReturnType<typeof useLiveMap>; bridge: any; tracking: Tracking | null; active: Marker[] }) {

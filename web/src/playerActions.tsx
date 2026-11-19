@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ActionAvail, api, MapState, Marker } from './api'
+import { ActionAvail, api, MapState, Marker, MzVehicle } from './api'
 import { useApi } from './hooks'
 import { useNotify } from './App'
 import { usePref } from './prefs'
@@ -108,6 +108,45 @@ function TeleportDialog({ x, z, label, death, onClose }: { x: number; z: number;
       </label>}
       <span className="hint">{grid(x, z)} · {x.toFixed(0)} / {z.toFixed(0)}. {death ? 'Lands beside where they died. The body may be gone by now.' : 'Lands a few metres beside this spot, on the ground.'}</span>
     </div>} />
+}
+
+const VEHICLE_ICONS: Record<string, IconName> = { vehicle_refuel: 'fuel', vehicle_repair: 'wrench', vehicle_flip: 'flip', vehicle_stop_engine: 'power', vehicle_delete: 'trash' }
+
+/** Refuel, repair, flip, stop the engine of, or delete one vehicle (needs @DZMBridge). */
+export function VehicleActions({ vehicle }: { vehicle: MzVehicle }) {
+  const acts = useApi<ActionAvail[]>('/api/vehicles/actions', ['capabilities'])
+  const notify = useNotify()
+  const [mode, setMode] = useState<ActionAvail | null>(null)
+  const [busy, setBusy] = useState(false)
+  // MetricZ ids are hashes; only the bridge's network ids ("lo:hi") can be targeted.
+  const bridgeId = /^-?\d+:-?\d+$/.test(vehicle.id)
+  const run = async (a: ActionAvail, typed?: string) => {
+    setBusy(true)
+    try {
+      await api.post(`/api/vehicles/${encodeURIComponent(vehicle.id)}/actions/${a.name}`, { confirm: typed || undefined })
+      notify(`${a.label}: done for ${vehicle.class}`)
+      setMode(null)
+    } catch (e: any) {
+      notify(`${a.label} failed: ${e.message}`, 'bad')
+    } finally { setBusy(false) }
+  }
+  const list = acts.data ?? []
+  return (
+    <div className="qa-section">
+      <h4>Vehicle</h4>
+      <div className="qa">
+        {list.map((a) => {
+          const why = !bridgeId ? 'Vehicle actions need live positions from @DZMBridge (this vehicle comes from MetricZ)' : !a.available ? a.reason : a.help
+          const quick = !a.destructive && a.name !== 'vehicle_repair'
+          return <button key={a.name} className={a.destructive ? 'danger' : ''} disabled={!bridgeId || !a.available || busy} title={why || a.label}
+            onClick={() => quick ? run(a) : setMode(a)}><Icon name={VEHICLE_ICONS[a.name] || 'check'} />{a.label}</button>
+        })}
+      </div>
+      {mode && <Confirm title={`${mode.label}: ${vehicle.class}`} word={mode.confirm} tone={mode.destructive ? 'danger' : 'primary'}
+        confirmLabel={mode.label} busy={busy} onClose={() => setMode(null)} onConfirm={(typed: string) => run(mode, typed)} body={
+          <p className="small muted">{mode.help}{mode.destructive ? ' This cannot be undone.' : ''}</p>} />}
+    </div>
+  )
 }
 
 type Mode = 'message' | 'kick' | 'teleport' | 'give_item' | 'heal' | 'kill' | 'strip' | null

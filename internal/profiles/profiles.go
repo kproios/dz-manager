@@ -17,9 +17,9 @@ import (
 
 // Provider kinds.
 const (
-	SelfhostedArchitect = "selfhosted_architect"
-	Managed               = "managed"
-	Generic             = "generic"
+	Selfhosted = "selfhosted"
+	Managed      = "managed"
+	Generic    = "generic"
 )
 
 // ErrNotFound is returned for unknown profiles.
@@ -91,11 +91,11 @@ func (in *Input) normalize() error {
 		return errors.New("name is required (max 80 chars)")
 	}
 	switch in.ProviderKind {
-	case SelfhostedArchitect, Managed, Generic:
+	case Selfhosted, Managed, Generic:
 	case "":
 		in.ProviderKind = Generic
 	default:
-		return fmt.Errorf("provider_kind must be %s, %s or %s", SelfhostedArchitect, Managed, Generic)
+		return fmt.Errorf("provider_kind must be %s, %s or %s", Selfhosted, Managed, Generic)
 	}
 	if in.GamePort == 0 {
 		in.GamePort = 2302

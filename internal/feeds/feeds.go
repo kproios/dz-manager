@@ -19,6 +19,8 @@ import (
 type Feeds struct {
 	DB  *store.DB
 	Bus *hooks.Bus
+	// WorldLabel names the active map ("Chernarus", "Livonia"…).
+	WorldLabel func(context.Context) string
 
 	mu   sync.Mutex
 	last map[string]time.Time
@@ -42,17 +44,6 @@ func (f *Feeds) name(ctx context.Context, steam64 string) string {
 		return "a survivor"
 	}
 	return n
-}
-
-// Grid is the 3-digit map grid reference (same as the panel).
-func Grid(x, z float64) string {
-	p := func(n float64) string {
-		if n < 0 {
-			n = 0
-		}
-		return fmt.Sprintf("%03d", int(n/100))
-	}
-	return p(x) + " " + p(15360-z)
 }
 
 func (f *Feeds) onDeath(ctx context.Context, ev bridge.Event) {
@@ -97,6 +88,9 @@ func (f *Feeds) onJoin(ctx context.Context, ev bridge.Event) {
 	f.Bus.Publish(hooks.Event{Kind: hooks.Leave, Time: ev.Time, Title: n + " left"})
 }
 
+// onRaid announces raid activity without any location: no grid, coordinates,
+// town or attacker. Public channels must never reveal where a base is; admins
+// see the position on the panel map only.
 func (f *Feeds) onRaid(ctx context.Context, ev bridge.Event) {
 	var d struct {
 		Class string `json:"class"`
@@ -104,9 +98,6 @@ func (f *Feeds) onRaid(ctx context.Context, ev bridge.Event) {
 	_ = json.Unmarshal(ev.Data, &d)
 	what := map[string]string{"raid.hit": "A base is under attack", "raid.destroyed": "A base part was destroyed", "raid.codelock": "A code lock is being raided"}[ev.Type]
 	fields := []hooks.Field{{Name: "Structure", Value: orDash(d.Class)}}
-	if ev.Pos != nil {
-		fields = append(fields, hooks.Field{Name: "Grid", Value: Grid(ev.Pos.X, ev.Pos.Z)})
-	}
 	f.Bus.Publish(hooks.Event{Kind: hooks.Raid, Time: ev.Time, Title: what, Fields: fields})
 }
 
@@ -130,7 +121,11 @@ func (f *Feeds) onWorld(ctx context.Context, ev bridge.Event) {
 	}
 	f.last[d.Category] = ev.Time
 	f.mu.Unlock()
-	f.Bus.Publish(hooks.Event{Kind: hooks.WorldEvent, Time: ev.Time, Title: label + " spotted", Text: "Somewhere in Chernarus. Good luck!"})
+	where := "the map"
+	if f.WorldLabel != nil {
+		where = f.WorldLabel(ctx)
+	}
+	f.Bus.Publish(hooks.Event{Kind: hooks.WorldEvent, Time: ev.Time, Title: label + " spotted", Text: "Somewhere in " + where + ". Good luck!"})
 }
 
 func (f *Feeds) onServer(ctx context.Context, ev bridge.Event) {

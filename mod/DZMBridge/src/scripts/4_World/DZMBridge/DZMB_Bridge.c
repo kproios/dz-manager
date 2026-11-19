@@ -170,6 +170,7 @@ class DZMB_Bridge
 	protected bool m_LiveBusy;
 	protected int m_LiveTick;
 	protected ref map<Transport, string> m_VehicleSeen = new map<Transport, string>;
+	protected float m_WorldAcc;
 
 	static DZMB_Bridge Get()
 	{
@@ -209,9 +210,82 @@ class DZMB_Bridge
 		m_Commands.Insert("kill");
 		m_Commands.Insert("strip");
 		m_Commands.Insert("notify");
+		m_Commands.Insert("vehicle_refuel");
+		m_Commands.Insert("vehicle_repair");
+		m_Commands.Insert("vehicle_flip");
+		m_Commands.Insert("vehicle_stop_engine");
+		m_Commands.Insert("vehicle_delete");
 		Emit("server.start", "", "", "{}", false, "0 0 0");
+		EmitWorldInfo();
 		Heartbeat();
 		DZMB_Log.Info("v" + DZMB_VERSION + " started, ingest " + DZMB_Config.Get().ingest_url);
+	}
+
+	// ---- world ----
+
+	// Size of the loaded terrain in metres (Chernarus 15360, Livonia 12800…).
+	static float WorldSize()
+	{
+		float size = GetGame().GetWorld().GetWorldSize();
+		if (size < 1000)
+			size = 15360;
+		return size;
+	}
+
+	// Tells the panel which map this is and the named places from the game's
+	// own config (CfgWorlds <world> Names), so any map works without a
+	// hand-made location list. Sent at start and every 6 hours.
+	void EmitWorldInfo()
+	{
+		string world;
+		GetGame().GetWorldName(world);
+		string label;
+		GetGame().ConfigGetText("CfgWorlds " + world + " description", label);
+		string root = "CfgWorlds " + world + " Names";
+		int count = GetGame().ConfigGetChildrenCount(root);
+		array<string> rows = new array<string>;
+		for (int i = 0; i < count; i++)
+		{
+			string child;
+			if (!GetGame().ConfigGetChildName(root, i, child))
+				continue;
+			string path = root + " " + child;
+			string name, kind;
+			GetGame().ConfigGetText(path + " name", name);
+			GetGame().ConfigGetText(path + " type", kind);
+			if (name == "" || name.IndexOf("$") == 0)
+				continue;
+			TFloatArray xz = new TFloatArray;
+			GetGame().ConfigGetFloatArray(path + " position", xz);
+			if (xz.Count() < 2)
+				continue;
+			DZMB_Json p = new DZMB_Json();
+			// The class name carries the Latin-script name (Settlement_Chernogorsk);
+			// "name" is what the in-game map shows (Cyrillic on Chernarus).
+			p.Str("n", name).Str("c", child).Str("k", kind).Num("x", xz[0]).Num("z", xz[1]);
+			rows.Insert(p.End());
+		}
+		int per = 80;
+		int parts = (rows.Count() + per - 1) / per;
+		string snapshot = m_Boot + "-w" + GetGame().GetTime().ToString();
+		DZMB_Json d = new DZMB_Json();
+		d.Str("world", world).Str("label", label).Num("size", WorldSize()).Str("snapshot", snapshot).IntV("parts", parts);
+		Emit("world.info", "", "", d.End(), false, "0 0 0");
+		for (int part = 0; part < parts; part++)
+		{
+			string list = "[";
+			for (int k = part * per; k < rows.Count() && k < (part + 1) * per; k++)
+			{
+				if (k > part * per)
+					list += ",";
+				list += rows[k];
+			}
+			list += "]";
+			DZMB_Json chunk = new DZMB_Json();
+			chunk.Str("snapshot", snapshot).IntV("part", part).Raw("places", list);
+			Emit("world.places", "", "", chunk.End(), false, "0 0 0");
+		}
+		DZMB_Log.Info("world " + world + " (" + WorldSize().ToString() + " m), " + rows.Count().ToString() + " place names");
 	}
 
 	// ---- events ----
@@ -428,6 +502,12 @@ class DZMB_Bridge
 			ReconcileTracking();
 		}
 		PushLive(dt);
+		m_WorldAcc += dt;
+		if (m_WorldAcc >= 21600)
+		{
+			m_WorldAcc = 0;
+			EmitWorldInfo();
+		}
 		// Every tracked marker is pinged on this timer. The panel removes a marker
 		// that stops being pinged, so the ping is what keeps it on the map.
 		if (m_EventRefreshAcc >= 30)
@@ -591,6 +671,11 @@ class DZMB_Bridge
 		if (c.action == "notify")
 		{
 			DoNotify(c);
+			return;
+		}
+		if (c.action.IndexOf("vehicle_") == 0)
+		{
+			DoVehicle(c);
 			return;
 		}
 		PlayerBase p = FindPlayer(c.target);
@@ -819,7 +904,8 @@ class DZMB_Bridge
 		}
 		else
 		{
-			if (c.params.x < 0 || c.params.x > 15360 || c.params.z < 0 || c.params.z > 15360)
+			float size = WorldSize();
+			if (c.params.x < 0 || c.params.x > size || c.params.z < 0 || c.params.z > size)
 			{
 				Result(c.id, false, "coordinates out of bounds", "null");
 				return;
@@ -924,6 +1010,185 @@ class DZMB_Bridge
 		DZMB_Json j = new DZMB_Json();
 		j.IntV("removed", removed);
 		Result(c.id, true, "", j.End());
+	}
+
+	// ---- vehicles ----
+
+	static Transport FindVehicle(string id)
+	{
+		foreach (Transport t : DZMB_Vehicles.s_All)
+		{
+			if (t && DZMB_Vehicles.Id(t) == id)
+				return t;
+		}
+		return null;
+	}
+
+	static int CrewCount(Transport t)
+	{
+		int crew = 0;
+		for (int seat = 0; seat < t.CrewSize(); seat++)
+		{
+			if (t.CrewMember(seat))
+				crew++;
+		}
+		return crew;
+	}
+
+	// Pristine health for the vehicle and everything attached to it (wheels,
+	// doors, battery, plugs, radiator…), several levels deep. Cargo is untouched.
+	static void RepairDeep(EntityAI e, int depth)
+	{
+		if (!e || depth > 4)
+			return;
+		e.SetFullHealth();
+		GameInventory inv = e.GetInventory();
+		if (!inv)
+			return;
+		for (int i = 0; i < inv.AttachmentCount(); i++)
+			RepairDeep(inv.GetAttachmentFromIndex(i), depth + 1);
+	}
+
+	static float FuelOf(Transport t)
+	{
+		CarScript car;
+		BoatScript boat;
+		MotorbikeScript bike;
+		if (Class.CastTo(car, t)) return car.GetFluidFraction(CarFluid.FUEL);
+		if (Class.CastTo(boat, t)) return boat.GetFluidFraction(BoatFluid.FUEL);
+		if (Class.CastTo(bike, t)) return bike.GetFluidFraction(MotorbikeFluid.FUEL);
+		return -1;
+	}
+
+	static bool EngineOn(Transport t)
+	{
+		CarScript car;
+		BoatScript boat;
+		MotorbikeScript bike;
+		if (Class.CastTo(car, t)) return car.EngineIsOn();
+		if (Class.CastTo(boat, t)) return boat.EngineIsOn();
+		if (Class.CastTo(bike, t)) return bike.EngineIsOn();
+		return false;
+	}
+
+	void FinishRefuel(string cmdId, Transport t, float capacity)
+	{
+		if (!t)
+		{
+			Result(cmdId, false, "the vehicle was deleted", "null");
+			return;
+		}
+		float fuel = FuelOf(t);
+		DZMB_Json j = new DZMB_Json();
+		j.Str("id", DZMB_Vehicles.Id(t)).Str("class", t.GetType()).Num("fuel", fuel).Num("capacity_l", capacity);
+		string error = "";
+		if (fuel < 0.99)
+			error = "fuel is " + Math.Round(fuel * 100).ToString() + "% after filling " + capacity.ToString() + " l";
+		Result(cmdId, fuel >= 0.99, error, j.End());
+	}
+
+	protected void DoVehicle(DZMB_Cmd c)
+	{
+		Transport t = FindVehicle(c.target);
+		if (!t)
+		{
+			Result(c.id, false, "vehicle not found (it may have been deleted or the server restarted)", "null");
+			return;
+		}
+		CarScript car;
+		BoatScript boat;
+		MotorbikeScript bike;
+		HelicopterScript heli;
+		Class.CastTo(car, t);
+		Class.CastTo(boat, t);
+		Class.CastTo(bike, t);
+		Class.CastTo(heli, t);
+		DZMB_Json j = new DZMB_Json();
+		j.Str("id", c.target).Str("class", t.GetType());
+		switch (c.action)
+		{
+			case "vehicle_refuel":
+				float capacity = 0;
+				dBodyActive(t, ActiveState.ACTIVE);
+				if (car)
+				{
+					capacity = car.GetFluidCapacity(CarFluid.FUEL);
+					car.Fill(CarFluid.FUEL, capacity);
+				}
+				else if (boat)
+				{
+					capacity = boat.GetFluidCapacity(BoatFluid.FUEL);
+					boat.Fill(BoatFluid.FUEL, capacity);
+				}
+				else if (bike)
+				{
+					capacity = bike.GetFluidCapacity(MotorbikeFluid.FUEL);
+					bike.Fill(MotorbikeFluid.FUEL, capacity);
+				}
+				else
+				{
+					Result(c.id, false, "this vehicle has no fuel tank DZ Manager can fill", "null");
+					return;
+				}
+				// Read the tank back a moment later and report what the game says.
+				GetGame().GetCallQueue(CALL_CATEGORY_SYSTEM).CallLater(FinishRefuel, 1500, false, c.id, t, capacity);
+				return;
+			case "vehicle_repair":
+				// Vanilla repairs several times: wheels only report full health after a pass or two.
+				for (int pass = 0; pass < 3; pass++)
+					RepairDeep(t, 0);
+				if (car)
+				{
+					car.Fill(CarFluid.COOLANT, car.GetFluidCapacity(CarFluid.COOLANT));
+					car.Fill(CarFluid.OIL, car.GetFluidCapacity(CarFluid.OIL));
+					car.Fill(CarFluid.BRAKE, car.GetFluidCapacity(CarFluid.BRAKE));
+				}
+				t.SetSynchDirty();
+				j.Num("health", t.GetHealth01("", ""));
+				Result(c.id, t.GetHealth01("", "") > 0.99, "", j.End());
+				return;
+			case "vehicle_flip":
+				if (GetVelocity(t).Length() > 2)
+				{
+					Result(c.id, false, "the vehicle is moving", "null");
+					return;
+				}
+				vector ori = t.GetOrientation();
+				vector pos = t.GetPosition();
+				float ground = GetGame().SurfaceRoadY(pos[0], pos[2]);
+				if (pos[1] < ground)
+					pos[1] = ground;
+				pos[1] = pos[1] + 0.6;
+				SetVelocity(t, vector.Zero);
+				dBodySetAngularVelocity(t, vector.Zero);
+				t.SetPosition(pos);
+				t.SetOrientation(Vector(ori[0], 0, 0));
+				dBodyActive(t, ActiveState.ACTIVE);
+				t.Synchronize();
+				vector now = t.GetOrientation();
+				j.Num("pitch", now[1]).Num("roll", now[2]);
+				Result(c.id, Math.AbsFloat(now[1]) < 5 && Math.AbsFloat(now[2]) < 5, "", j.End());
+				return;
+			case "vehicle_stop_engine":
+				if (car) car.EngineStop();
+				else if (boat) boat.EngineStop();
+				else if (bike) bike.EngineStop();
+				else if (heli) heli.EngineStop();
+				j.BoolV("engine_on", EngineOn(t));
+				Result(c.id, !EngineOn(t), "", j.End());
+				return;
+			case "vehicle_delete":
+				if (CrewCount(t) > 0)
+				{
+					Result(c.id, false, "someone is inside the vehicle", "null");
+					return;
+				}
+				GetGame().ObjectDelete(t);
+				j.BoolV("deleted", true);
+				Result(c.id, true, "", j.End());
+				return;
+		}
+		Result(c.id, false, "unsupported action " + c.action, "null");
 	}
 
 	// ---- hooks (called from modded classes) ----

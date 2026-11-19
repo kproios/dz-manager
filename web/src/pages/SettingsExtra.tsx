@@ -42,46 +42,107 @@ export function DiscordChannels() {
   )
 }
 
-const BOT_ENDPOINTS: [string, string][] = [
-  ['/public/v1/status', 'Name, players online, uptime, FPS, next restart'],
-  ['/public/v1/online', 'Names of players online'],
-  ['/public/v1/killfeed?limit=20', 'Latest kills: killer, victim, weapon, distance'],
-  ['/public/v1/leaderboard?by=kills|playtime|kd', 'Top players'],
-  ['/public/v1/player?name=Alice', 'Stats for one player by name'],
-  ['/public/v1/bans', 'Active bans: name, reason, until'],
-  ['/public/v1/events', 'How many helicrashes/airdrops/convoys are active (no locations)'],
-  ['/public/v1/info', 'Your server info text below (rules, mechanics, FAQ)'],
-  ['/public/v1/feed?after=0', 'Every public event in order (kills, joins, raids, bans, restarts); poll with the last id'],
+interface ApiScope { name: string; label: string; help: string; sensitive: boolean }
+interface ApiKey { id: string; name: string; prefix: string; scopes: string[]; created_at: string; created_by: string; expires_at?: string; last_used_at?: string; revoked_at?: string }
+const EXPIRY: [number, string][] = [[0, 'Never'], [30, '30 days'], [90, '90 days'], [365, '1 year']]
+const PRESETS: [string, string, string[]][] = [
+  ['website', 'Website / Discord bot', ['public']],
+  ['sharing', 'Share bans and priority with another server', ['bans:read', 'priority:read']],
+  ['mcp-read', 'MCP client, read only', ['public', 'players:read', 'bans:read', 'priority:read', 'map:read']],
+  ['mcp-admin', 'MCP client that can act', ['public', 'players:read', 'bans:read', 'priority:read', 'map:read', 'actions:write']],
 ]
 
-/** Token-protected read-only API for a Discord bot. */
-export function BotApi() {
-  const b = useApi<{ enabled: boolean; created_at: string; info: string; base_path: string }>('/api/settings/bot')
-  const [token, setToken] = useState('')
-  const [info, setInfo] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState<'new' | 'revoke' | null>(null)
+/** API keys for websites, bots, other servers and MCP clients (MCP). */
+export function ApiKeys() {
+  const k = useApi<{ keys: ApiKey[]; scopes: ApiScope[]; base_path: string; mcp_path: string; docs: string }>('/api/settings/api-keys')
+  const [form, setForm] = useState<{ name: string; scopes: string[]; days: number } | null>(null)
+  const [created, setCreated] = useState<{ name: string; token: string; mcp: boolean } | null>(null)
+  const [revoke, setRevoke] = useState<ApiKey | null>(null)
+  const [showOld, setShowOld] = useState(false)
   const notify = useNotify()
-  if (!b.data) return b.error ? <Card title="Bot API"><ErrorBox error={b.error} /></Card> : null
+  if (!k.data) return k.error ? <Card title="API keys"><ErrorBox error={k.error} /></Card> : null
+  const origin = window.location.origin
+  const scopes = k.data.scopes
+  const label = (s: string) => scopes.find((x) => x.name === s)?.label ?? s
+  const active = k.data.keys.filter((x) => !x.revoked_at)
+  const shown = showOld ? k.data.keys : active
+  const toggle = (s: string) => form && setForm({ ...form, scopes: form.scopes.includes(s) ? form.scopes.filter((x) => x !== s) : [...form.scopes, s] })
+  const create = async () => {
+    if (!form) return
+    try {
+      const r = await api.post<{ key: ApiKey; token: string }>('/api/settings/api-keys', { name: form.name, scopes: form.scopes, expires_days: form.days })
+      setCreated({ name: r.key.name, token: r.token, mcp: form.scopes.some((s) => s !== 'public') })
+      setForm(null)
+      k.reload()
+    } catch (e: any) { notify(e.message, 'bad') }
+  }
+  const doRevoke = async () => {
+    if (!revoke) return
+    try { await api.del('/api/settings/api-keys/' + revoke.id); notify(`“${revoke.name}” revoked`); k.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setRevoke(null) }
+  }
+  const mcpConfig = (token: string) => JSON.stringify({ mcpServers: { 'dz-manager': { type: 'http', url: origin + k.data!.mcp_path, headers: { Authorization: 'Bearer ' + token } } } }, null, 2)
+  const sensitive = form?.scopes.some((s) => scopes.find((x) => x.name === s)?.sensitive)
+  return (
+    <Card title={<><Icon name="lock" />API keys</>} actions={<button className="small primary" onClick={() => setForm({ name: '', scopes: ['public'], days: 0 })}><Icon name="plus" />New key</button>}>
+      <p className="hint" style={{ marginTop: 0 }}>Each key gets only the scopes you tick. Websites and bots call <code>{origin}{k.data.base_path}</code> with <code>Authorization: Bearer dzm_…</code> (<a href={k.data.docs} target="_blank" rel="noreferrer noopener">OpenAPI description</a>). MCP clients connect to the MCP server at <code>{origin}{k.data.mcp_path}</code> and only see the tools their key allows. Everything a key does in game is in the audit log under its name.</p>
+      {!shown.length ? <Empty>No API keys yet.</Empty> : <div className="table-scroll"><table>
+        <thead><tr><th>Name</th><th>Scopes</th><th>Last used</th><th>Expires</th><th /></tr></thead>
+        <tbody>{shown.map((x) => <tr key={x.id} className={x.revoked_at ? 'muted' : ''}>
+          <td><b>{x.name}</b><div className="muted small"><code>{x.prefix}…</code> · by {x.created_by}, {new Date(x.created_at).toLocaleDateString()}</div></td>
+          <td><div className="row wrap">{x.scopes.map((s) => <Badge key={s} state={scopes.find((y) => y.name === s)?.sensitive ? 'warn' : 'muted'}>{label(s)}</Badge>)}</div></td>
+          <td className="small">{x.last_used_at ? new Date(x.last_used_at).toLocaleString() : <span className="muted">never</span>}</td>
+          <td className="small">{x.revoked_at ? <Badge state="error">revoked</Badge> : x.expires_at ? new Date(x.expires_at).toLocaleDateString() : <span className="muted">never</span>}</td>
+          <td className="num">{!x.revoked_at && <button className="small ghost" onClick={() => setRevoke(x)}>Revoke</button>}</td>
+        </tr>)}</tbody>
+      </table></div>}
+      {k.data.keys.length > active.length && <button className="small ghost" onClick={() => setShowOld(!showOld)}>{showOld ? 'Hide revoked keys' : `Show ${k.data.keys.length - active.length} revoked`}</button>}
+
+      {created && <div className="warnings" style={{ marginTop: 10, display: 'block' }}>
+        <p style={{ margin: '0 0 6px' }}><b>Copy the key for “{created.name}” now, it is shown only once:</b></p>
+        <span className="id-line"><code>{created.token}</code><CopyButton value={created.token} label="Copy key" /></span>
+        {created.mcp && <><p className="small" style={{ margin: '10px 0 4px' }}>To connect an MCP client that supports Streamable HTTP:</p>
+          <pre className="code-block">{mcpConfig(created.token)}</pre>
+          <CopyButton value={mcpConfig(created.token)} label="Copy MCP config" /></>}
+        <div className="row end"><button className="small" onClick={() => setCreated(null)}>Done</button></div>
+      </div>}
+
+      {form && <Confirm title="New API key" tone="primary" confirmLabel="Create key" disabled={!form.name.trim() || !form.scopes.length} onClose={() => setForm(null)} onConfirm={create} body={
+        <div className="form">
+          <label className="field">Name<input autoFocus maxLength={60} value={form.name} placeholder="e.g. Website stats, Discord bot, Integration" onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+          <label className="field">Start from
+            <select value="" onChange={(e) => { const p = PRESETS.find((x) => x[0] === e.target.value); if (p) setForm({ ...form, scopes: p[2], name: form.name || p[1] }) }}>
+              <option value="">Choose a preset…</option>
+              {PRESETS.map(([id, l]) => <option key={id} value={id}>{l}</option>)}
+            </select>
+          </label>
+          <div className="field">Scopes
+            {scopes.map((s) => <label key={s.name} className="check" style={{ alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={form.scopes.includes(s.name)} onChange={() => toggle(s.name)} />
+              <span><b>{s.label}</b> <code className="small">{s.name}</code><br /><span className="muted small">{s.help}</span></span>
+            </label>)}
+          </div>
+          <div className="field">Expires<Seg label="Expires" value={form.days} onChange={(v) => setForm({ ...form, days: v })} options={EXPIRY} /></div>
+          {sensitive && <p className="warn small">This key can see Steam IDs or positions{form.scopes.includes('actions:write') ? ' and change the game' : ''}. Keep it on a server or in your AI client, never in a web page.</p>}
+        </div>} />}
+      {revoke && <Confirm title={`Revoke “${revoke.name}”?`} confirmLabel="Revoke" onClose={() => setRevoke(null)} onConfirm={doRevoke}
+        body={<p>The key stops working immediately. Anything using it needs a new key.</p>} />}
+    </Card>
+  )
+}
+
+/** The server info text the public API serves (rules, FAQ) for bots. */
+export function BotInfo() {
+  const b = useApi<{ info: string; base_path: string }>('/api/settings/bot')
+  const [info, setInfo] = useState<string | null>(null)
+  const notify = useNotify()
+  if (!b.data) return b.error ? <Card title="Server info"><ErrorBox error={b.error} /></Card> : null
   const text = info ?? b.data.info
-  const newToken = async () => { try { const r = await api.post<{ token: string }>('/api/settings/bot/token'); setToken(r.token); b.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setConfirm(null) } }
-  const revoke = async () => { try { await api.post('/api/settings/bot/revoke'); setToken(''); notify('Bot token revoked'); b.reload() } catch (e: any) { notify(e.message, 'bad') } finally { setConfirm(null) } }
   const saveInfo = async () => { try { await api.put('/api/settings/bot/info', { info: text }); setInfo(null); notify('Server info saved'); b.reload() } catch (e: any) { notify(e.message, 'bad') } }
   return (
-    <Card title={<><Icon name="chat" />Bot API (for a Discord bot)</>} actions={b.data.enabled ? <Badge state="ok">token active</Badge> : <Badge state="muted">no token</Badge>}>
-      <p className="hint" style={{ marginTop: 0 }}>Read-only and public-safe: no Steam IDs, IPs or exact event locations. Send the token as <code>Authorization: Bearer …</code> to <code>{window.location.origin}{b.data.base_path}</code>.</p>
-      <div className="row">
-        <button className="small primary" onClick={() => b.data!.enabled ? setConfirm('new') : newToken()}>{b.data.enabled ? 'New token…' : 'Create token'}</button>
-        {b.data.enabled && <button className="small ghost" onClick={() => setConfirm('revoke')}>Revoke</button>}
-        {b.data.created_at && <span className="muted small">created {new Date(b.data.created_at).toLocaleString()}</span>}
-      </div>
-      {token && <div className="warnings" style={{ marginTop: 10 }}><b>Copy this token now, it is shown only once:</b> <span className="id-line"><code>{token}</code><CopyButton value={token} label="Copy token" /></span></div>}
-      <h4>Endpoints</h4>
-      <table className="small"><tbody>{BOT_ENDPOINTS.map(([p, d]) => <tr key={p}><td><code>GET {p}</code></td><td className="muted">{d}</td></tr>)}</tbody></table>
-      <h4>Server info for the bot</h4>
+    <Card title={<><Icon name="chat" />Server info for bots</>}>
+      <p className="hint" style={{ marginTop: 0 }}>Served at <code>GET {b.data.base_path}/info</code> to keys with the Public stats scope.</p>
       <textarea rows={6} value={text} maxLength={20000} placeholder={'Rules, wipe schedule, how raiding works, trader locations, Discord links…\nThe bot can quote this when players ask questions.'} onChange={(e) => setInfo(e.target.value)} />
       <div className="row end"><span className="muted small">{text.length}/20000</span><button className="small" disabled={info == null} onClick={saveInfo}>Save info</button></div>
-      {confirm && <Confirm title={confirm === 'new' ? 'Create a new token?' : 'Revoke the bot token?'} confirmLabel={confirm === 'new' ? 'Create token' : 'Revoke'} onClose={() => setConfirm(null)} onConfirm={confirm === 'new' ? newToken : revoke}
-        body={<p>The current token stops working immediately{confirm === 'new' ? '; update your bot with the new one' : ''}.</p>} />}
     </Card>
   )
 }
