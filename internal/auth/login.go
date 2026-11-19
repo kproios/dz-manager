@@ -56,12 +56,14 @@ func (a *Auth) getPending(r *http.Request) (pending, bool) {
 func (a *Auth) afterFirstFactor(ctx context.Context, w http.ResponseWriter, uid int64, method, ret string) string {
 	var enc string
 	_ = a.db.QueryRowContext(ctx, `SELECT totp_secret FROM users WHERE id=?`, uid).Scan(&enc)
-	kind := "totp"
+	p := pending{UID: uid, Method: method, Kind: "totp", Return: safeReturn(ret)}
 	if enc == "" {
-		kind = "enroll"
+		// The key is fixed here, once: however often the setup page asks
+		// (reloads, two tabs, parallel requests) it always gets this one.
+		p.Kind, p.Secret = "enroll", NewTOTPSecret()
 	}
-	a.setPending(w, pending{UID: uid, Method: method, Kind: kind, Return: safeReturn(ret)})
-	return kind
+	a.setPending(w, p)
+	return p.Kind
 }
 
 // Register adds the sign-in routes (all under /auth/) to the root mux.
@@ -265,13 +267,9 @@ func (a *Auth) enrollPayload(ctx context.Context, uid int64, sec string) (map[st
 
 func (a *Auth) enrollStart(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.getPending(r)
-	if !ok || p.Kind != "enroll" {
+	if !ok || p.Kind != "enroll" || p.Secret == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Your sign-in expired. Start again."})
 		return
-	}
-	if p.Secret == "" {
-		p.Secret = NewTOTPSecret()
-		a.setPending(w, p)
 	}
 	out, err := a.enrollPayload(r.Context(), p.UID, p.Secret)
 	if err != nil {

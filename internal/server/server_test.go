@@ -286,9 +286,24 @@ func TestInviteRolesAndStepUp(t *testing.T) {
 	if code := e.JSON("POST", "/auth/invite/"+token+"/password", map[string]string{"username": "Steve", "password": "a long enough password"}, &next); code != 200 || next["next"] != "enroll" {
 		t.Fatalf("accept = %d %v", code, next)
 	}
+	// Two setup requests can leave with the same pending cookie before either
+	// response arrives. Snapshot it to reproduce that race deterministically.
+	setupURL, _ := url.Parse(e.TS.URL)
+	otherJar, _ := cookiejar.New(nil)
+	otherJar.SetCookies(setupURL, e.Client.Jar.Cookies(setupURL))
+	otherTab := *e
+	otherTab.Client = &http.Client{Jar: otherJar}
 	var enr map[string]string
 	if code := e.JSON("POST", "/auth/enroll/start", nil, &enr); code != 200 || !strings.HasPrefix(enr["qr"], "data:image/png;base64,") || !strings.HasPrefix(enr["uri"], "otpauth://totp/") {
 		t.Fatalf("enroll start = %d", code)
+	}
+	// The QR code, copyable key and setup link must agree across both requests.
+	var again map[string]string
+	if code := otherTab.JSON("POST", "/auth/enroll/start", nil, &again); code != 200 || again["secret"] != enr["secret"] || again["uri"] != enr["uri"] || again["qr"] != enr["qr"] {
+		t.Fatal("overlapping setup requests returned different enrollment data")
+	}
+	if code := e.JSON("POST", "/auth/enroll/start", nil, &again); code != 200 || again["secret"] != enr["secret"] {
+		t.Fatal("the setup key changed on reload")
 	}
 	var done struct {
 		RecoveryCodes []string `json:"recovery_codes"`

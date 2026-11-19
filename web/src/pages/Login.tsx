@@ -3,7 +3,7 @@ import { api, ApiError, AuthState, Enrollment, Methods } from '../api'
 import { useNotify } from '../App'
 import { CodeField, RecoveryCodes, roleLabels } from '../auth'
 import { Icon } from '../icons'
-import { ErrorBox } from '../ui'
+import { CopyButton, ErrorBox } from '../ui'
 
 const errorText: Record<string, string> = {
   no_account: 'No DZ Manager account is linked to that sign-in. Ask an owner for an invite, or sign in another way and link it under Account.',
@@ -31,7 +31,7 @@ export default function Login({ route, args, query, onSignedIn }: { route: strin
   let body
   if (!state) body = <div className="muted">Loading…</div>
   else if (state.pending === 'totp') body = <TotpStep onDone={onSignedIn} onCancel={() => api.post('/auth/cancel').then(reload)} />
-  else if (state.pending === 'enroll') body = <EnrollStep onDone={onSignedIn} />
+  else if (state.pending === 'enroll') body = <EnrollStep onDone={onSignedIn} onRestart={() => api.post('/auth/cancel').then(reload)} />
   else if (route === 'invite' && args[0]) body = <InviteStep token={args[0]} methods={state.methods} onNext={reload} />
   else body = <SignIn state={state} onNext={reload} />
 
@@ -127,7 +127,7 @@ function TotpStep({ onDone, onCancel }: { onDone: () => void; onCancel: () => vo
 }
 
 /** Sets up the authenticator app (first sign-in, or after an owner reset 2FA). */
-export function EnrollStep({ onDone, start = '/auth/enroll/start', finish = '/auth/enroll/finish' }: { onDone: () => void; start?: string; finish?: string }) {
+export function EnrollStep({ onDone, onRestart, start = '/auth/enroll/start', finish = '/auth/enroll/finish' }: { onDone: () => void; onRestart?: () => void; start?: string; finish?: string }) {
   const [enr, setEnr] = useState<Enrollment | null>(null)
   const [code, setCode] = useState('')
   const [codes, setCodes] = useState<string[] | null>(null)
@@ -157,11 +157,18 @@ export function EnrollStep({ onDone, start = '/auth/enroll/start', finish = '/au
       <ErrorBox error={err} />
       {enr ? <>
         <img className="qr" src={enr.qr} alt="QR code for your authenticator app" width={200} height={200} />
-        <button type="button" className="link small" onClick={() => setShowKey(!showKey)}>{showKey ? 'Hide the key' : 'Can’t scan? Type the key instead'}</button>
-        {showKey && <p className="small">Account <b>{enr.account}</b>, key <code className="secret-key">{enr.secret.match(/.{1,4}/g)?.join(' ')}</code> (time-based)</p>}
+        <button type="button" className="link small" onClick={() => setShowKey(!showKey)}>{showKey ? 'Hide the key' : 'Can’t scan? Copy the key instead'}</button>
+        {showKey && <div className="small enroll-key">
+          <p>Copy and paste rather than typing: a mistyped character is easy to miss and gives wrong codes.
+            In Bitwarden, paste the setup link (or the key) into the login’s <i>Authenticator key</i> field.</p>
+          <div className="id-line"><span>Setup link</span><CopyButton value={enr.uri} label="Copy setup link" /></div>
+          <div className="id-line"><span>Key</span><code className="secret-key">{enr.secret.match(/.{1,4}/g)?.join(' ')}</code><CopyButton value={enr.secret} label="Copy key" /></div>
+          <p className="muted">Account {enr.account} · time-based · 6 digits · 30 seconds</p>
+        </div>}
         <CodeField value={code} onChange={setCode} autoFocus={false} />
         <button className="primary" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Turn it on'}</button>
       </> : !err && <div className="muted">Preparing…</div>}
+      {onRestart && <button type="button" className="link small" onClick={onRestart}>Start over</button>}
     </form>
   )
 }
