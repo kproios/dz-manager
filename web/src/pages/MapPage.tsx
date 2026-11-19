@@ -456,7 +456,7 @@ function MapView({ focusId, focusKey, focusClass, world }: MapProps & { world: W
       </div>
       {pending && (
         <Confirm title={`Teleport ${pending.target.name}?`} tone="primary" confirmLabel="Teleport" busy={tpBusy} onClose={cancelPending} onConfirm={confirmTp} body={
-          <p>Move <b>{pending.target.name}</b> to <b>{pending.label}</b>. They are placed on the ground there; players inside a vehicle can't be moved.</p>} />
+          <p>Move <b>{pending.target.name}</b> to <b>{pending.label}</b>. They land on top of whatever is there (ground, road, roof or water); players inside a vehicle can't be moved.</p>} />
       )}
     </div>
   )

@@ -108,7 +108,7 @@ function TeleportDialog({ x, z, label, death, onClose }: { x: number; z: number;
           {targets.map((p) => <option key={p.steam64} value={p.steam64}>{p.name}</option>)}
         </select>
       </label>}
-      <span className="hint">{grid(x, z)} · {x.toFixed(0)} / {z.toFixed(0)}. {death ? 'Lands beside where they died. The body may be gone by now.' : 'Lands a few metres beside this spot, on the ground.'}</span>
+      <span className="hint">{grid(x, z)} · {x.toFixed(0)} / {z.toFixed(0)}. {death ? 'Lands beside where they died. The body may be gone by now.' : 'Lands a few metres beside this spot, on top of whatever is there (ground, road, roof or water).'}</span>
     </div>} />
 }
 
@@ -266,7 +266,7 @@ export function PlayerActions({ target, layout = 'row', dests = [], players = []
               <label className="field">Z (north, 0–{WORLD})<input inputMode="decimal" value={xz.z} aria-invalid={xz.z !== '' && !coordOk(xz.z)} onChange={(e) => setXz({ ...xz, z: e.target.value })} /></label>
             </div>}
             {onPick && <button type="button" className="small" onClick={() => { close(); onPick() }}><Icon name="target" />Pick a point on the map instead</button>}
-            <span className="hint">The player is placed on the ground at the destination. Players in vehicles can't be teleported.</span>
+            <span className="hint">The player is placed on top of whatever is at the destination (ground, road, roof or water). Players in vehicles can't be teleported.</span>
           </div>} />
       )}
 

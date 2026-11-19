@@ -910,15 +910,41 @@ class DZMB_Bridge
 				Result(c.id, false, "coordinates out of bounds", "null");
 				return;
 			}
-			float y = GetGame().SurfaceY(c.params.x, c.params.z);
-			if (c.params.has_y)
-				y = c.params.y;
-			dest = Vector(c.params.x, y, c.params.z);
+			dest = LandingPoint(c.params.x, c.params.z, c.params.has_y, c.params.y, p);
 		}
 		p.SetPosition(dest);
 		DZMB_Json j = new DZMB_Json();
 		j.Pos("pos", p.GetPosition());
 		Result(c.id, vector.Distance(p.GetPosition(), dest) < 5, "", j.End());
+	}
+
+	// Where a player can stand at x/z. The map only knows x and z, and SurfaceY is the
+	// bare terrain: it ignores buildings, rocks, roads, bridges and water, so players
+	// ended up inside walls, under bridges or on the sea bed. Like vanilla's developer
+	// teleport, cast down onto what a player collides with and keep them out of water.
+	// With an altitude (a body on an upper floor) the cast starts just above it, so
+	// they land on that floor instead of the roof.
+	protected vector LandingPoint(float x, float z, bool hasY, float y, PlayerBase ignore)
+	{
+		float ground = GetGame().SurfaceRoadY(x, z);
+		float top = ground + 500;
+		if (hasY && y > ground - 1 && y < top)
+			top = y + 1.8;
+		float land = ground;
+		vector hitPos, hitNormal;
+		float hitFraction;
+		Object hitObj;
+		int layers = PhxInteractionLayers.TERRAIN | PhxInteractionLayers.ROADWAY | PhxInteractionLayers.BUILDING | PhxInteractionLayers.ITEM_LARGE | PhxInteractionLayers.FENCE;
+		if (DayZPhysics.SphereCastBullet(Vector(x, top, z), Vector(x, ground - 1, z), 0.2, layers, ignore, hitObj, hitPos, hitNormal, hitFraction) && hitPos[1] > land)
+			land = hitPos[1];
+		// Sea, ponds and lakes: stand on the water, not the bottom.
+		float sea = GetGame().SurfaceGetSeaLevel();
+		if (GetGame().SurfaceIsSea(x, z) && land < sea)
+			land = sea;
+		float depth = GetGame().GetWaterDepth(Vector(x, land, z));
+		if (depth > 0)
+			land = land + depth;
+		return Vector(x, land + 0.05, z);
 	}
 
 	protected void DoGive(DZMB_Cmd c, PlayerBase p)
