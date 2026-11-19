@@ -67,7 +67,7 @@ export const api = {
 export type Role = 'owner' | 'admin' | 'moderator' | 'viewer'
 export type Permission = 'view.live' | 'players.private' | 'players.moderate' | 'bans.manage' | 'actions.safe' | 'actions.strong'
   | 'server.control' | 'settings.manage' | 'servers.manage' | 'users.manage'
-export interface Me { id: number; sub: string; username: string; email: string; csrf: string; role: Role; permissions: Permission[]; method: string; step_up_until: string }
+export interface Me { id: number; sub: string; username: string; email: string; csrf: string; role: Role; permissions: Permission[]; method: string; totp: boolean; step_up_until: string }
 export interface Methods { password: boolean; steam: boolean; oidc: boolean; oidc_label?: string }
 export interface AuthState { signed_in: boolean; username?: string; pending?: 'totp' | 'enroll'; setup_needed: boolean; methods: Methods }
 export interface RoleInfo { name: Role; label: string; help: string; permissions: Permission[] }

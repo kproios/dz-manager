@@ -17,6 +17,8 @@ export default function Account({ query }: { query: URLSearchParams }) {
   const notify = useNotify()
   const [codes, setCodes] = useState<string[] | null>(null)
   const [newPhone, setNewPhone] = useState(false)
+  const [disable2FA, setDisable2FA] = useState(false)
+  const [disableBusy, setDisableBusy] = useState(false)
   useEffect(() => {
     const l = query.get('linked')
     if (l) { notify(`${methodLabels[l] || l} sign-in linked`); window.location.hash = '#/account' }
@@ -26,8 +28,17 @@ export default function Account({ query }: { query: URLSearchParams }) {
     try { await f(); notify(ok); reload() } catch (x) { notify(x instanceof ApiError ? x.message : 'Failed', 'bad') }
   }
   const link = async (method: 'steam' | 'oidc') => {
-    if (await ensureStepUp(acc.step_up_until)) window.location.href = `/auth/${method}/login?link=1`
+    if (!acc.totp || await ensureStepUp(acc.step_up_until)) window.location.href = `/auth/${method}/login?link=1`
   }
+  const turnOff2FA = async () => {
+    setDisableBusy(true)
+    try {
+      await api.del('/api/account/2fa')
+      setCodes(null); setDisable2FA(false); reload(); notify('2FA turned off')
+    } catch (x) { notify(x instanceof ApiError ? x.message : 'Could not turn off 2FA', 'bad') }
+    finally { setDisableBusy(false) }
+  }
+  const closeSetup = () => { setNewPhone(false); reload() }
   const role = acc.user.role
   return (
     <>
@@ -48,17 +59,19 @@ export default function Account({ query }: { query: URLSearchParams }) {
               ? <div className="row wrap"><Badge state="ok">linked</Badge><button className="small" onClick={() => run(() => api.del('/api/account/oidc'), 'Single sign-on removed')}>Remove</button></div>
               : <button onClick={() => link('oidc')}>Link {acc.methods.oidc_label || 'single sign-on'}</button>}
           </>}
-          <p className="hint">Keep at least one way to sign in. Every sign-in also asks for your 2FA code.</p>
+          <p className="hint">Keep at least one way to sign in. You can add an authenticator app for extra protection.</p>
         </Card>
         <Card title="Two-step check (2FA)">
           <dl>
-            <dt>Authenticator app</dt><dd><Badge state={acc.totp ? 'ok' : 'warn'}>{acc.totp ? 'on' : 'not set up'}</Badge></dd>
-            <dt>Recovery codes left</dt><dd><Badge state={acc.recovery_left > 2 ? 'ok' : 'warn'}>{acc.recovery_left}</Badge></dd>
+            <dt>Authenticator app</dt><dd><Badge state={acc.totp ? 'ok' : 'muted'}>{acc.totp ? 'on' : 'off'}</Badge></dd>
+            {acc.totp && <><dt>Recovery codes left</dt><dd><Badge state={acc.recovery_left > 2 ? 'ok' : 'warn'}>{acc.recovery_left}</Badge></dd></>}
           </dl>
-          <div className="row wrap" style={{ marginTop: 12 }}>
+          <p className="hint">{acc.totp ? 'A code is required when you sign in and before sensitive actions.' : '2FA is optional. Turn it on to require a code as well as your usual sign-in.'}</p>
+          {acc.totp ? <div className="row wrap" style={{ marginTop: 12 }}>
             <button onClick={() => run(async () => setCodes((await api.post<{ recovery_codes: string[] }>('/api/account/recovery-codes')).recovery_codes), 'New recovery codes made; the old ones no longer work')}>New recovery codes</button>
             <button onClick={() => setNewPhone(true)}>Move to a new phone</button>
-          </div>
+            <button onClick={() => setDisable2FA(true)}>Turn off 2FA</button>
+          </div> : <div className="row wrap" style={{ marginTop: 12 }}><button className="primary" onClick={() => setNewPhone(true)}>Turn on 2FA</button></div>}
           {codes && <><hr /><RecoveryCodes codes={codes} /><button className="small" onClick={() => setCodes(null)}>Hide</button></>}
         </Card>
       </div>
@@ -84,13 +97,16 @@ export default function Account({ query }: { query: URLSearchParams }) {
         ))}</ul>
       </Card>
       {newPhone && (
-        <div className="modal-bg" onClick={() => setNewPhone(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Move to a new phone">
-            <EnrollStep start="/api/account/2fa/start" finish="/api/account/2fa/finish" onDone={() => { setNewPhone(false); reload(); notify('2FA moved to the new phone') }} />
-            <div className="row end"><button onClick={() => setNewPhone(false)}>Cancel</button></div>
+        <div className="modal-bg" onClick={closeSetup}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={acc.totp ? 'Move to a new phone' : 'Turn on 2FA'}>
+            <EnrollStep start="/api/account/2fa/start" finish="/api/account/2fa/finish" onDone={() => { setNewPhone(false); reload(); notify(acc.totp ? '2FA moved to the new phone' : '2FA turned on') }} />
+            <div className="row end"><button onClick={closeSetup}>Cancel</button></div>
           </div>
         </div>
       )}
+      {disable2FA && <Confirm title="Turn off 2FA?" confirmLabel="Turn off 2FA" busy={disableBusy} onClose={() => setDisable2FA(false)}
+        body="Future sign-ins will use your password, Steam or single sign-on without an authenticator code. Recovery codes will stop working, and your other sessions will be signed out."
+        onConfirm={turnOff2FA} />}
     </>
   )
 }

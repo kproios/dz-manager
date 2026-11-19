@@ -1,6 +1,6 @@
 // Package smoke builds the real dzm binary and exercises it end to end:
-// start → /ready → owner invite from the command line → password + 2FA
-// setup → API → audit row → restart → persistence.
+// start → /ready → owner invite from the command line → password sign-in
+// → API → audit row → restart → persistence.
 package smoke
 
 import (
@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/kproios/dz-manager/internal/apptest"
-	"github.com/kproios/dz-manager/internal/auth"
 )
 
 func build(t *testing.T) string {
@@ -132,11 +131,6 @@ func TestSmoke(t *testing.T) {
 	}
 	if code := post("/auth/invite/"+token+"/password", `{"username":"Owner","password":"a long enough password"}`, nil); code != 200 {
 		t.Fatalf("accept invite = %d", code)
-	}
-	var enr map[string]string
-	post("/auth/enroll/start", "", &enr)
-	if code := post("/auth/enroll/finish", `{"code":"`+auth.TOTPAt(enr["secret"], time.Now())+`"}`, nil); code != 200 {
-		t.Fatalf("2FA setup = %d", code)
 	}
 	resp, err := c.Get(url + "/")
 	if err != nil {

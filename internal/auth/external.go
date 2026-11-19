@@ -33,7 +33,7 @@ type flow struct {
 }
 
 // startFlow reads what the round trip is for: an invite (with the chosen
-// name), linking to the signed-in account (needs a fresh 2FA confirmation),
+// name), linking to the signed-in account (needs fresh 2FA when enabled),
 // or a plain sign-in.
 func (a *Auth) startFlow(w http.ResponseWriter, r *http.Request, kind string) (flow, bool) {
 	q := r.URL.Query()
@@ -51,7 +51,7 @@ func (a *Auth) startFlow(w http.ResponseWriter, r *http.Request, kind string) (f
 		}
 	case q.Get("link") == "1":
 		u, err := a.Session(r)
-		if err != nil || a.now().Unix()-u.mfaAt > int64(StepUpTTL.Seconds()) {
+		if err != nil || (u.TOTP && a.now().Unix()-u.mfaAt > int64(StepUpTTL.Seconds())) {
 			http.Redirect(w, r, "/#/account?e=confirm", http.StatusFound)
 			return f, false
 		}
@@ -110,8 +110,9 @@ func (a *Auth) finishExternal(w http.ResponseWriter, r *http.Request, f flow, me
 			loginError(w, r, code)
 			return
 		}
-		a.afterFirstFactor(ctx, w, uid, method, "/")
-		http.Redirect(w, r, "/#/login", http.StatusFound)
+		if next := a.afterFirstFactor(ctx, w, r, uid, method, "/"); next != "" {
+			http.Redirect(w, r, "/#/login", http.StatusFound)
+		}
 	default:
 		var uid int64
 		var disabled sql.NullString
@@ -130,8 +131,13 @@ func (a *Auth) finishExternal(w http.ResponseWriter, r *http.Request, f flow, me
 			loginError(w, r, "locked")
 			return
 		}
-		a.afterFirstFactor(ctx, w, uid, method, f.Return)
-		http.Redirect(w, r, "/#/login", http.StatusFound)
+		if next := a.afterFirstFactor(ctx, w, r, uid, method, f.Return); next != "" {
+			target := "/#/login"
+			if next == "signed_in" {
+				target = f.Return
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+		}
 	}
 }
 

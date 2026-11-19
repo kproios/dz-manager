@@ -31,7 +31,7 @@ export default function Login({ route, args, query, onSignedIn }: { route: strin
   let body
   if (!state) body = <div className="muted">Loading…</div>
   else if (state.pending === 'totp') body = <TotpStep onDone={onSignedIn} onCancel={() => api.post('/auth/cancel').then(reload)} />
-  else if (state.pending === 'enroll') body = <EnrollStep onDone={onSignedIn} onRestart={() => api.post('/auth/cancel').then(reload)} />
+  else if (state.pending === 'enroll') body = <EnrollStep onDone={onSignedIn} onSkip={() => api.post('/auth/enroll/skip').then(onSignedIn)} onRestart={() => api.post('/auth/cancel').then(reload)} />
   else if (route === 'invite' && args[0]) body = <InviteStep token={args[0]} methods={state.methods} onNext={reload} />
   else body = <SignIn state={state} onNext={reload} />
 
@@ -87,7 +87,7 @@ function SignIn({ state, onNext }: { state: AuthState; onNext: () => void }) {
       <button className="primary" disabled={busy || !login || !password}>{busy ? 'Checking…' : 'Continue'}</button>
       {(state.methods.steam || state.methods.oidc) && <div className="signin-or"><span>or</span></div>}
       <OtherMethods methods={state.methods} />
-      <p className="muted small">Every sign-in asks for a code from your authenticator app too.</p>
+      <p className="muted small">If you turned on 2FA, your authenticator code comes next.</p>
     </form>
   )
 }
@@ -127,7 +127,7 @@ function TotpStep({ onDone, onCancel }: { onDone: () => void; onCancel: () => vo
 }
 
 /** Sets up the authenticator app (first sign-in, or after an owner reset 2FA). */
-export function EnrollStep({ onDone, onRestart, start = '/auth/enroll/start', finish = '/auth/enroll/finish' }: { onDone: () => void; onRestart?: () => void; start?: string; finish?: string }) {
+export function EnrollStep({ onDone, onRestart, onSkip, start = '/auth/enroll/start', finish = '/auth/enroll/finish' }: { onDone: () => void; onRestart?: () => void; onSkip?: () => Promise<void>; start?: string; finish?: string }) {
   const [enr, setEnr] = useState<Enrollment | null>(null)
   const [code, setCode] = useState('')
   const [codes, setCodes] = useState<string[] | null>(null)
@@ -168,6 +168,7 @@ export function EnrollStep({ onDone, onRestart, start = '/auth/enroll/start', fi
         <CodeField value={code} onChange={setCode} autoFocus={false} />
         <button className="primary" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Turn it on'}</button>
       </> : !err && <div className="muted">Preparing…</div>}
+      {onSkip && <button type="button" className="link small" disabled={busy} onClick={async () => { setBusy(true); try { await onSkip() } catch (x) { setErr(errMsg(x)); setBusy(false) } }}>Set up later</button>}
       {onRestart && <button type="button" className="link small" onClick={onRestart}>Start over</button>}
     </form>
   )
@@ -215,7 +216,7 @@ function InviteStep({ token, methods, onNext }: { token: string; methods: Method
         <div className="signin-or"><span>or, instead of a password</span></div>
         {nameOk ? <OtherMethods methods={methods} query={q} /> : <p className="muted small">Pick your name first.</p>}
       </>}
-      <p className="muted small">Next you set up a code app on your phone: every sign-in asks for it.</p>
+      <p className="muted small">You can turn on optional two-factor authentication under Account after joining.</p>
     </form>
   )
 }
