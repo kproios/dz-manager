@@ -924,19 +924,23 @@ class DZMB_Bridge
 	// teleport, cast down onto what a player collides with and keep them out of water.
 	// With an altitude (a body on an upper floor) the cast starts just above it, so
 	// they land on that floor instead of the roof.
-	protected vector LandingPoint(float x, float z, bool hasY, float y, PlayerBase ignore)
+	protected static vector LandingPoint(float x, float z, bool hasY, float y, Object ignore)
 	{
-		float ground = GetGame().SurfaceRoadY(x, z);
-		float top = ground + 500;
-		if (hasY && y > ground - 1 && y < top)
+		float terrain = GetGame().SurfaceY(x, z);
+		float top = terrain + 500;
+		if (hasY && y > terrain - 1 && y < top)
 			top = y + 1.8;
-		float land = ground;
+		float land = terrain;
 		vector hitPos, hitNormal;
 		float hitFraction;
 		Object hitObj;
 		int layers = PhxInteractionLayers.TERRAIN | PhxInteractionLayers.ROADWAY | PhxInteractionLayers.BUILDING | PhxInteractionLayers.ITEM_LARGE | PhxInteractionLayers.FENCE;
-		if (DayZPhysics.SphereCastBullet(Vector(x, top, z), Vector(x, ground - 1, z), 0.2, layers, ignore, hitObj, hitPos, hitNormal, hitFraction) && hitPos[1] > land)
+		if (DayZPhysics.SphereCastBullet(Vector(x, top, z), Vector(x, terrain - 1, z), 0.2, layers, ignore, hitObj, hitPos, hitNormal, hitFraction) && hitPos[1] > land)
 			land = hitPos[1];
+		// Walkable building floors, roofs and bridges below the start height (roadway LODs).
+		float road = GetGame().SurfaceRoadY3D(x, top, z, RoadSurfaceDetection.UNDER);
+		if (road > land && road <= top)
+			land = road;
 		// Sea, ponds and lakes: stand on the water, not the bottom.
 		float sea = GetGame().SurfaceGetSeaLevel();
 		if (GetGame().SurfaceIsSea(x, z) && land < sea)
