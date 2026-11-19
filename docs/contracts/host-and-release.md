@@ -46,7 +46,7 @@ adding protection.
 | `DZM_TZ` | no | `Europe/Helsinki` | Display and schedule timezone. Everything is stored in UTC. |
 | `DZM_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. JSON logs go to stdout (journald). |
 | `DZM_ALERT_WEBHOOK` | no | – | Optional ntfy/Discord-compatible URL for operational alerts. |
-| `DZM_MAP_MAX_PX` | no | `10000` | Largest map image (pixels per side) the server will tile. Tiling needs about 4 bytes per pixel of memory (7616 px ≈ 500 MB peak). 1024–20000. |
+| `DZM_MAP_MAX_PX` | no | `10000` | Largest map image (pixels per side) the server will tile. Tiling needs about 4 bytes per pixel of memory (7616 px ≈ 270 MB peak, so it fits the unit's `MemoryMax=512M`). 1024–20000. |
 | `DZM_CONTAINER` | no | – | `1` only in the official Docker image: allows `DZM_LISTEN` on all interfaces inside the container (the host publishes the port, normally on loopback). |
 
 Game-server connection details (host, ports, RCON password, ingest tokens) are **not** environment

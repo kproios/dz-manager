@@ -44,7 +44,7 @@ DZ Manager downloads a terrain image from [tools.dzhosts.com/maps](https://tools
 (rendered from the game's own terrain textures by
 [dayz-terrain-map](https://github.com/jmhobbs/dayz-terrain-map), MIT), cuts it into map tiles under
 `$DZM_DATA_DIR/tiles/<world>/terrain/` and deletes the download. 7,000–8,000 px is plenty; tiling
-a 7616 px image takes a few seconds and about 500 MB of memory. `DZM_MAP_MAX_PX` (default 10000)
+a 7616 px image takes a few seconds and about 270 MB of memory. `DZM_MAP_MAX_PX` (default 10000)
 caps the size.
 
 From the command line (also for maps that are not listed, with a PNG you rendered yourself with

@@ -542,6 +542,11 @@ func InstallFile(dataDir, world, path, source string, maxPx int, progress func(s
 	if progress != nil {
 		progress("decoding", 0, 0)
 	}
+	// The decoded image is one large allocation (4 bytes per pixel); collect
+	// garbage eagerly while it is alive so the peak stays near that size
+	// instead of twice it (the service may run under a memory limit).
+	old := debug.SetGCPercent(10)
+	defer debug.SetGCPercent(old)
 	if _, err := f.Seek(0, 0); err != nil {
 		f.Close()
 		return nil, err
