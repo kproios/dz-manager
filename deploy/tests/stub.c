@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
             snprintf(body, sizeof body, "{\"rehearsal_stub\":true,\"version\":\"%s\"}", VERSION);
         } else {
             status=302;
-            snprintf(body, sizeof body, "Rehearsal stub; application and login implementation pending issue #3.\n");
+            snprintf(body, sizeof body, "Rehearsal stub; application and login implementation pending.\n");
             const char *issuer=getenv("DZM_OIDC_ISSUER"), *client=getenv("DZM_OIDC_CLIENT_ID");
             snprintf(extra, sizeof extra, "Location: https://sso.example.com/application/o/authorize/?client_id=%s&response_type=code&scope=openid%%20email%%20profile&redirect_uri=https%%3A%%2F%%2Fdzm.example.com%%2Fauth%%2Fcallback\r\n", issuer && client ? client : "pending");
         }

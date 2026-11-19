@@ -1,4 +1,4 @@
-// Package rcon implements the RCON + A2S connector (#15): real status, roster
+// Package rcon implements the RCON + A2S connector: real status, roster
 // and RCON-native actions (broadcast, private message, kick, lock/unlock).
 package rcon
 

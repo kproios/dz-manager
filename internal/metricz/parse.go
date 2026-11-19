@@ -1,4 +1,4 @@
-// Package metricz receives MetricZ HTTP exports (#5) and turns them into the
+// Package metricz receives MetricZ HTTP exports and turns them into the
 // live map snapshot and server performance series. The receiver is written
 // from MetricZ's documented push protocol; metricz-exporter (AGPL) is not used.
 package metricz

@@ -1,6 +1,6 @@
 // Package mapevents tracks actually-active world events (heli crashes,
-// airdrops, loot boxes, custom events) and historical rare-item spawn markers
-// (#6), emitted by @DZMBridge. Potential spawn points are never shown as live.
+// airdrops, loot boxes, custom events) and historical rare-item spawn markers,
+// emitted by @DZMBridge. Potential spawn points are never shown as live.
 package mapevents
 
 import (

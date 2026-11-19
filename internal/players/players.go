@@ -1,4 +1,4 @@
-// Package players keeps player identities, sessions and combat history (#11).
+// Package players keeps player identities, sessions and combat history.
 // Sources, in priority order: @DZMBridge events (authoritative), MetricZ
 // presence (fallback sessions when the bridge is not connected).
 package players

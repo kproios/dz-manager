@@ -1,7 +1,7 @@
 # Contract: control-plane host ⇄ DZ Manager release
 
-Status: **binding** for infrastructure work (#21)
-and application work (#3). Changing it means updating this file in the
+Status: **binding** for infrastructure work
+and application work. Changing it means updating this file in the
 same PR as the code that changes it.
 
 This file is the only thing the two sides have to agree on. The host does not need to know how

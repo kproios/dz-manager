@@ -31,7 +31,7 @@ import (
 func (a *App) registerFeatures(ctx context.Context) error {
 	srv := a.Server
 
-	// #15 RCON + A2S connector.
+	// RCON + A2S connector.
 	a.Alert = &alert.Sender{URL: a.Cfg.AlertWebhook, Log: srv.Log}
 	a.Restarts = &restarts.Service{DB: a.DB, Profiles: a.Profiles, Caps: a.Caps, Audit: srv.Audit, Alert: a.Alert, Log: srv.Log, TZ: a.Cfg.Location.String(),
 		Publish: func() { srv.Hub.Publish("restarts", map[string]bool{"changed": true}) }}
@@ -53,14 +53,14 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.onProfileChange = append(a.onProfileChange, a.RCON.Reload)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "rcon", a.RCON.Run) })
 
-	// #4 restart observation (provider is the authority).
+	// Restart observation (provider is the authority).
 	a.Restarts.Exec = func(ctx context.Context, cmd string) error { _, _, err := a.RCON.Exec(ctx, cmd); return err }
 	a.Restarts.KickAll = a.RCON.KickAll
 	a.Restarts.OnLock = a.RCON.SetLocked
 	a.Restarts.Register(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "restarts", a.Restarts.Run) })
 
-	// #16 bridge (event ingest + command queue) and #11 player history.
+	// Bridge (event ingest + command queue) and player history.
 	a.Bridge = &bridge.Bridge{DB: a.DB, Profiles: a.Profiles, Caps: a.Caps, Audit: srv.Audit, Log: srv.Log,
 		Publish: func(id string, types []string) {
 			srv.Hub.Publish("events", map[string]any{"server_id": id, "types": types})
@@ -74,7 +74,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.Players.Attach(a.Bridge)
 	a.Players.Register(srv.API)
 
-	// #5 MetricZ ingest + live map.
+	// MetricZ ingest + live map.
 	a.MetricZ = &metricz.Receiver{DB: a.DB, Profiles: a.Profiles, Caps: a.Caps, Log: srv.Log,
 		Publish: func(s metricz.Snapshot) {
 			srv.Hub.Publish("map", map[string]any{"server_id": s.ServerID, "received_at": s.ReceivedAt})
@@ -92,7 +92,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.World.Attach(a.Bridge)
 	a.World.Register(srv.API)
 
-	// #7 mod-backed player and vehicle actions, #6 map events, #10 bans.
+	// Mod-backed player and vehicle actions, map events, bans.
 	a.Actions = &actions.API{Bridge: a.Bridge, Players: a.Players, Profiles: a.Profiles, Audit: srv.Audit, WorldSize: a.World.Size}
 	a.Actions.Register(srv.API)
 	a.MapEvents = &mapevents.Service{DB: a.DB, Profiles: a.Profiles, Audit: srv.Audit, Log: srv.Log,
@@ -106,7 +106,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.Bans.Register(srv.API)
 	a.Bans.AttachBridge(a.Bridge)
 
-	// #13 priority queue, phase 1 (list + export; the provider applies it).
+	// Priority queue, phase 1 (list + export; the provider applies it).
 	(&priority.API{DB: a.DB, Audit: srv.Audit}).Register(srv.API)
 
 	// Player intel (Steam profile/bans, IP country/VPN), RCON chat and automatic messages.
