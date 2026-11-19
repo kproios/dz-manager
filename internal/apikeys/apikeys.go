@@ -20,6 +20,7 @@ import (
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/httpx"
+	"github.com/kproios/dz-manager/internal/perm"
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/store"
 )
@@ -72,7 +73,16 @@ type Key struct {
 	ExpiresAt  *string  `json:"expires_at,omitempty"`
 	LastUsedAt *string  `json:"last_used_at,omitempty"`
 	RevokedAt  *string  `json:"revoked_at,omitempty"`
+	// UserID is the user the key acts for. Its scopes are cut down at every
+	// request to what that user's role allows; a disabled user's keys stop.
+	UserID int64 `json:"user_id"`
+	// Role is the owning user's role at authentication time.
+	Role perm.Role `json:"-"`
 }
+
+// Can reports whether the key's owner may do p (checked by routes whose
+// danger depends on the request, such as strong game actions).
+func (k *Key) Can(p perm.Permission) bool { return k != nil && perm.Has(k.Role, p) }
 
 // Has reports whether the key holds a scope.
 func (k *Key) Has(scope string) bool {
@@ -102,13 +112,13 @@ type Store struct {
 	lastUsed map[string]time.Time
 }
 
-const cols = `id,name,prefix,scopes,created_at,created_by,expires_at,last_used_at,revoked_at`
+const cols = `id,name,prefix,scopes,created_at,created_by,expires_at,last_used_at,revoked_at,COALESCE(user_id,0)`
 
 func scan(row interface{ Scan(...any) error }) (*Key, error) {
 	var k Key
 	var scopes string
 	var exp, used, rev sql.NullString
-	if err := row.Scan(&k.ID, &k.Name, &k.Prefix, &scopes, &k.CreatedAt, &k.CreatedBy, &exp, &used, &rev); err != nil {
+	if err := row.Scan(&k.ID, &k.Name, &k.Prefix, &scopes, &k.CreatedAt, &k.CreatedBy, &exp, &used, &rev, &k.UserID); err != nil {
 		return nil, err
 	}
 	k.Scopes = strings.Fields(scopes)
@@ -142,8 +152,14 @@ func (s *Store) List(ctx context.Context) ([]Key, error) {
 	return out, rows.Err()
 }
 
-// Create stores a new key and returns it with its token (shown once).
-func (s *Store) Create(ctx context.Context, name string, scopes []string, ttl time.Duration, by string) (*Key, string, error) {
+// Create stores a new key for a user and returns it with its token (shown
+// once). The user's role must allow every scope.
+func (s *Store) Create(ctx context.Context, name string, scopes []string, ttl time.Duration, by string, uid int64, role perm.Role) (*Key, string, error) {
+	for _, sc := range scopes {
+		if p, ok := perm.ScopePerm[sc]; ok && !perm.Has(role, p) {
+			return nil, "", errors.New("your role does not allow the " + sc + " scope")
+		}
+	}
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 60 {
 		return nil, "", errors.New("give the key a name (up to 60 characters), e.g. “Website stats”")
@@ -174,8 +190,8 @@ func (s *Store) Create(ctx context.Context, name string, scopes []string, ttl ti
 	if ttl > 0 {
 		exp = now.Add(ttl).Format(time.RFC3339)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO api_keys(id,name,prefix,hash,scopes,created_at,created_by,expires_at) VALUES(?,?,?,?,?,?,?,?)`,
-		id, name, token[:10], s.Box.Hash(token), strings.Join(clean, " "), now.Format(time.RFC3339), by, exp)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO api_keys(id,name,prefix,hash,scopes,created_at,created_by,expires_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+		id, name, token[:10], s.Box.Hash(token), strings.Join(clean, " "), now.Format(time.RFC3339), by, exp, uid)
 	if err != nil {
 		return nil, "", err
 	}
@@ -223,6 +239,20 @@ func (s *Store) Authenticate(ctx context.Context, token string) (*Key, error) {
 			return nil, ErrNoKey
 		}
 	}
+	// The key acts for its user: no user, a disabled user or an unknown role
+	// means no key; scopes the role doesn't allow are dropped.
+	var role string
+	if k.UserID == 0 || s.DB.QueryRowContext(ctx, `SELECT role FROM users WHERE id=? AND disabled_at IS NULL`, k.UserID).Scan(&role) != nil || !perm.ValidRole(role) {
+		return nil, ErrNoKey
+	}
+	k.Role = perm.Role(role)
+	kept := k.Scopes[:0]
+	for _, sc := range k.Scopes {
+		if p, ok := perm.ScopePerm[sc]; ok && perm.Has(k.Role, p) {
+			kept = append(kept, sc)
+		}
+	}
+	k.Scopes = kept
 	s.touch(ctx, k.ID)
 	return k, nil
 }
@@ -297,7 +327,8 @@ func (s *Store) MigrateBotToken(ctx context.Context) {
 	if created == "" {
 		created = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO api_keys(id,name,prefix,hash,scopes,created_at,created_by) VALUES('botapi1','Bot API (from the old single token)','dzm_…',?,'public',?,'migration')`, st.TokenHash, created)
+	// It acts for the first owner (no owner yet: the first one takes it over).
+	_, err := s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO api_keys(id,name,prefix,hash,scopes,created_at,created_by,user_id) VALUES('botapi1','Bot API (from the old single token)','dzm_…',?,'public',?,'migration',(SELECT MIN(id) FROM users WHERE role='owner'))`, st.TokenHash, created)
 	if err == nil {
 		var m map[string]any
 		_ = json.Unmarshal([]byte(raw), &m)
@@ -340,7 +371,8 @@ func (s *Store) RegisterAdmin(mux *http.ServeMux) {
 			return
 		}
 		a := actor(r)
-		k, token, err := s.Create(r.Context(), in.Name, in.Scopes, time.Duration(in.ExpiresDays)*24*time.Hour, a.Name)
+		u := auth.FromContext(r.Context())
+		k, token, err := s.Create(r.Context(), in.Name, in.Scopes, time.Duration(in.ExpiresDays)*24*time.Hour, a.Name, u.ID, u.Role)
 		if err != nil {
 			httpx.Error(w, 400, err.Error())
 			return

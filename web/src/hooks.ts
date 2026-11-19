@@ -100,7 +100,8 @@ export function useApi<T>(path: string | null, events: string[] = [], intervalMs
   return { data, error, loading, reload: load, setData }
 }
 
-export function useHashRoute(): [string, string[]] {
+/** The hash route: name, path arguments and the query after "?" (e.g. #/login?e=no_account). */
+export function useHashRoute(): [string, string[], URLSearchParams] {
   const get = () => (window.location.hash.replace(/^#\/?/, '') || 'dashboard')
   const [route, setRoute] = useState(get())
   useEffect(() => {
@@ -108,8 +109,9 @@ export function useHashRoute(): [string, string[]] {
     window.addEventListener('hashchange', on)
     return () => window.removeEventListener('hashchange', on)
   }, [])
-  const parts = route.split('/').map(decodeURIComponent)
-  return [parts[0], parts.slice(1)]
+  const [path, query = ''] = route.split('?', 2)
+  const parts = path.split('/').map(decodeURIComponent)
+  return [parts[0] || 'dashboard', parts.slice(1), new URLSearchParams(query)]
 }
 
 /** A ticking clock for countdowns. */

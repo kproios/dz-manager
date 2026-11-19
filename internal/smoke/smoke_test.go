@@ -1,5 +1,6 @@
 // Package smoke builds the real dzm binary and exercises it end to end:
-// start → /ready → Authentik login → API → audit row → restart → persistence.
+// start → /ready → owner invite from the command line → password + 2FA
+// setup → API → audit row → restart → persistence.
 package smoke
 
 import (
@@ -17,7 +18,7 @@ import (
 	"time"
 
 	"github.com/kproios/dz-manager/internal/apptest"
-	"github.com/kproios/dz-manager/internal/auth/oidctest"
+	"github.com/kproios/dz-manager/internal/auth"
 )
 
 func build(t *testing.T) string {
@@ -87,12 +88,11 @@ func TestSmoke(t *testing.T) {
 		t.Fatalf("missing config must fail: %v %s", err, out)
 	}
 
-	is := oidctest.New()
-	defer is.Close()
+	// No identity provider: built-in accounts only, as a fresh install.
 	addr := freeAddr(t)
 	url := "http://" + addr
 	data := t.TempDir()
-	env := apptest.EnvVars(data, url, is.URL(), is.ClientID, is.Secret)
+	env := apptest.EnvVars(data, url, "", "", "")
 	env["DZM_LISTEN"] = addr
 	cmd, out := start(t, bin, env)
 	if r := waitReady(t, url); r["version"] != "v9.9.9-smoke" {
@@ -105,7 +105,40 @@ func TestSmoke(t *testing.T) {
 	if resp, _ := http.Get(url + "/api/status"); resp.StatusCode != 401 {
 		t.Fatalf("unauthenticated api = %d", resp.StatusCode)
 	}
-	resp, err := c.Get(url + "/auth/login")
+	// First owner: the command prints a one-time link.
+	inv := exec.Command(bin, "admin", "invite-owner")
+	for k, v := range env {
+		inv.Env = append(inv.Env, k+"="+v)
+	}
+	invOut, err := inv.CombinedOutput()
+	i := strings.Index(string(invOut), "/#/invite/")
+	if err != nil || i < 0 {
+		t.Fatalf("invite-owner: %v %s", err, invOut)
+	}
+	token := strings.Fields(string(invOut)[i+len("/#/invite/"):])[0]
+	post := func(path, body string, out any) int {
+		req, _ := http.NewRequest("POST", url+path, strings.NewReader(body))
+		req.Header.Set("Origin", url)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if out != nil {
+			json.NewDecoder(resp.Body).Decode(out)
+		}
+		return resp.StatusCode
+	}
+	if code := post("/auth/invite/"+token+"/password", `{"username":"Owner","password":"a long enough password"}`, nil); code != 200 {
+		t.Fatalf("accept invite = %d", code)
+	}
+	var enr map[string]string
+	post("/auth/enroll/start", "", &enr)
+	if code := post("/auth/enroll/finish", `{"code":"`+auth.TOTPAt(enr["secret"], time.Now())+`"}`, nil); code != 200 {
+		t.Fatalf("2FA setup = %d", code)
+	}
+	resp, err := c.Get(url + "/")
 	if err != nil {
 		t.Fatal(err)
 	}

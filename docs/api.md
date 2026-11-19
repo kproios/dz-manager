@@ -3,7 +3,9 @@
 Both use **API keys** made in Settings → Integrations → API keys. A key has a name, an optional
 expiry and a fixed set of scopes; the token (`dzm_…`) is shown once and only a keyed hash is
 stored. Revoking a key stops it at once. Everything a key does in game is in the audit log under
-"API key “name”".
+"API key “name”". A key acts for the user who made it: at every request it loses the scopes that
+user's role no longer allows (strong actions such as kill or delete need a role with strong
+actions), and it stops when the user is disabled or removed. See [accounts](accounts.md).
 
 | Scope | Gives |
 |---|---|

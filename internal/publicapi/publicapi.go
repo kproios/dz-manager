@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/hooks"
 	"github.com/kproios/dz-manager/internal/httpx"
+	"github.com/kproios/dz-manager/internal/perm"
 	"github.com/kproios/dz-manager/internal/store"
 )
 
@@ -175,12 +177,17 @@ func (a *API) runAction(w http.ResponseWriter, r *http.Request, target, id strin
 		httpx.Error(w, 400, "use the player's Steam64 ID")
 		return
 	}
+	key := apikeys.FromContext(r.Context())
+	if slices.Contains(perm.StrongActions, r.PathValue("action")) && !key.Can(perm.ActionsStrong) {
+		httpx.Error(w, 403, "the user this API key belongs to may not use strong actions (kill, strip, give items, delete vehicles)")
+		return
+	}
 	var in actions.Request
 	if err := httpx.Decode(r, 4<<10, &in); err != nil {
 		httpx.Error(w, 400, err.Error())
 		return
 	}
-	o := a.Actions.Run(r.Context(), apikeys.FromContext(r.Context()).Actor(), target, id, r.PathValue("action"), in)
+	o := a.Actions.Run(r.Context(), key.Actor(), target, id, r.PathValue("action"), in)
 	httpx.JSON(w, o.Status, o)
 }
 

@@ -1,6 +1,8 @@
-// Package auth implements Authentik-only login (OIDC authorization code +
-// PKCE), server-side sessions, and CSRF/Origin protection. There are no local
-// passwords and no bypass.
+// Package auth owns DZ Manager's accounts: built-in sign-in (password +
+// TOTP), Steam sign-in and an optional OpenID Connect provider, all followed
+// by a mandatory second factor; server-side sessions; CSRF/Origin checks;
+// role-based permissions on every panel API route; invites and user
+// management. Roles live in DZ Manager, never in an identity provider.
 package auth
 
 import (
@@ -9,41 +11,51 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-	"golang.org/x/oauth2"
-
 	"github.com/kproios/dz-manager/internal/audit"
 	"github.com/kproios/dz-manager/internal/config"
+	"github.com/kproios/dz-manager/internal/perm"
 	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/store"
 )
 
 const (
-	sessionCookie = "dzm_session"
-	flowCookie    = "dzm_oidc"
 	// CSRFHeader must echo the session's CSRF token on state-changing requests.
 	CSRFHeader = "X-DZM-CSRF"
 
 	absoluteTTL = 12 * time.Hour
 	idleTTL     = 2 * time.Hour
+	pendingTTL  = 10 * time.Minute
 	flowTTL     = 10 * time.Minute
+	// StepUpTTL is how long a 2FA confirmation unlocks sensitive routes.
+	StepUpTTL = 10 * time.Minute
 )
 
 // User is the authenticated principal attached to a request.
 type User struct {
-	ID       int64  `json:"id"`
-	Sub      string `json:"sub"`
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	CSRF     string `json:"csrf"`
+	ID          int64             `json:"id"`
+	Sub         string            `json:"sub"`
+	Username    string            `json:"username"`
+	Email       string            `json:"email"`
+	CSRF        string            `json:"csrf"`
+	Role        perm.Role         `json:"role"`
+	Permissions []perm.Permission `json:"permissions"`
+	Method      string            `json:"method"`
+	// StepUpUntil is when the last 2FA confirmation stops unlocking sensitive routes.
+	StepUpUntil time.Time `json:"step_up_until"`
+
+	sessionHash string
+	mfaAt       int64
 }
+
+// Can reports whether the user holds a permission.
+func (u *User) Can(p perm.Permission) bool { return u != nil && perm.Has(u.Role, p) }
 
 // Actor converts a user to an audit actor.
 func (u *User) Actor() audit.Actor { return audit.Actor{Sub: u.Sub, Name: u.Username} }
@@ -61,7 +73,7 @@ func WithUser(ctx context.Context, u *User) context.Context {
 	return context.WithValue(ctx, ctxKey{}, u)
 }
 
-// Auth wires OIDC and sessions.
+// Auth wires sign-in methods, sessions and permissions.
 type Auth struct {
 	cfg   *config.Config
 	db    *store.DB
@@ -70,256 +82,184 @@ type Auth struct {
 	log   *slog.Logger
 	now   func() time.Time
 
-	mu       sync.Mutex
-	provider *oidc.Provider
-	endSess  string
-	// HTTPClient is used for OIDC discovery and token calls (tests inject one).
+	oidc   *oidcProvider // nil when no OpenID Connect provider is configured
+	oidcMu sync.Mutex
+	steam  *steamLogin // nil when Steam sign-in is turned off
+
+	ipFails *failWindow
+
+	// HTTPClient is used for OIDC and Steam calls (tests inject one).
 	HTTPClient *http.Client
+	// SteamEndpoint overrides Steam's OpenID endpoint (tests).
+	SteamEndpoint string
 }
 
-// New creates an Auth. OIDC discovery is lazy so Authentik being down never
-// prevents the service from starting or reporting ready.
+// New creates an Auth. Provider discovery is lazy so an identity provider
+// being down never prevents the service from starting or reporting ready.
 func New(cfg *config.Config, db *store.DB, box *secret.Box, al *audit.Log, log *slog.Logger) *Auth {
-	return &Auth{cfg: cfg, db: db, box: box, audit: al, log: log, now: time.Now}
+	a := &Auth{cfg: cfg, db: db, box: box, audit: al, log: log, now: time.Now, ipFails: newFailWindow(20, 15*time.Minute)}
+	if cfg.OIDCIssuer != "" {
+		a.oidc = &oidcProvider{a: a}
+	}
+	if cfg.SteamLogin {
+		a.steam = &steamLogin{a: a}
+	}
+	return a
 }
 
-func (a *Auth) ctx(ctx context.Context) context.Context {
+// SetClock replaces the clock (tests).
+func (a *Auth) SetClock(now func() time.Time) { a.now = now }
+
+func (a *Auth) client() *http.Client {
 	if a.HTTPClient != nil {
-		return oidc.ClientContext(ctx, a.HTTPClient)
+		return a.HTTPClient
 	}
-	return ctx
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
-// Provider returns the discovered OIDC provider, discovering on first use.
-func (a *Auth) Provider(ctx context.Context) (*oidc.Provider, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.provider != nil {
-		return a.provider, nil
-	}
-	dctx, cancel := context.WithTimeout(a.ctx(ctx), 10*time.Second)
-	defer cancel()
-	p, err := oidc.NewProvider(dctx, a.cfg.OIDCIssuer)
-	if err != nil {
-		return nil, err
-	}
-	var extra struct {
-		EndSession string `json:"end_session_endpoint"`
-	}
-	_ = p.Claims(&extra)
-	a.provider, a.endSess = p, extra.EndSession
-	return p, nil
+// Methods describes the sign-in methods for the login page.
+type Methods struct {
+	Password  bool   `json:"password"`
+	Steam     bool   `json:"steam"`
+	OIDC      bool   `json:"oidc"`
+	OIDCLabel string `json:"oidc_label,omitempty"`
 }
 
-func (a *Auth) oauth(p *oidc.Provider) *oauth2.Config {
-	return &oauth2.Config{
-		ClientID:     a.cfg.OIDCClientID,
-		ClientSecret: a.cfg.OIDCClientSecret,
-		Endpoint:     p.Endpoint(),
-		RedirectURL:  a.cfg.PublicURL.String() + "/auth/callback",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+// Methods returns the enabled sign-in methods.
+func (a *Auth) Methods() Methods {
+	m := Methods{Password: true, Steam: a.steam != nil, OIDC: a.oidc != nil}
+	if m.OIDC {
+		m.OIDCLabel = a.cfg.OIDCLabel
 	}
+	return m
 }
 
-type flowState struct {
-	State    string `json:"s"`
-	Nonce    string `json:"n"`
-	Verifier string `json:"v"`
-	Return   string `json:"r"`
-	Exp      int64  `json:"e"`
+// FormActionOrigin is the identity provider origin the logout form may
+// redirect to (CSP form-action), or "".
+func (a *Auth) FormActionOrigin() string {
+	if a.oidc == nil {
+		return ""
+	}
+	return originOf(a.cfg.OIDCIssuer)
 }
 
-// Login starts the OIDC flow (GET /auth/login?return=/path).
-func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
-	p, err := a.Provider(r.Context())
-	if err != nil {
-		a.log.Error("oidc discovery failed", "err", err)
-		http.Error(w, "Authentik is unreachable right now; try again shortly.", http.StatusBadGateway)
-		return
-	}
-	fs := flowState{
-		State:    secret.Token(24),
-		Nonce:    secret.Token(24),
-		Verifier: oauth2.GenerateVerifier(),
-		Return:   safeReturn(r.URL.Query().Get("return")),
-		Exp:      a.now().Add(flowTTL).Unix(),
-	}
-	b, _ := json.Marshal(fs)
-	http.SetCookie(w, &http.Cookie{
-		Name: flowCookie, Value: a.box.SealString(string(b), flowCookie), Path: "/auth",
-		HttpOnly: true, Secure: a.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode,
-		MaxAge: int(flowTTL.Seconds()),
-	})
-	u := a.oauth(p).AuthCodeURL(fs.State, oidc.Nonce(fs.Nonce), oauth2.S256ChallengeOption(fs.Verifier))
-	http.Redirect(w, r, u, http.StatusFound)
-}
-
-type idClaims struct {
-	Sub      string   `json:"sub"`
-	Username string   `json:"preferred_username"`
-	Name     string   `json:"name"`
-	Email    string   `json:"email"`
-	Groups   []string `json:"groups"`
-	Nonce    string   `json:"nonce"`
-}
-
-// Callback completes the OIDC flow (GET /auth/callback).
-func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	fail := func(status int, msg string, err error) {
-		a.log.Warn("login failed", "reason", msg, "err", err)
-		_ = a.audit.Write(ctx, audit.Actor{Sub: "anonymous", Name: "anonymous"}, "auth.login", "", nil, "denied", msg)
-		http.Error(w, msg, status)
-	}
-	c, err := r.Cookie(flowCookie)
-	if err != nil {
-		fail(http.StatusBadRequest, "login session missing or expired; start again", err)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{Name: flowCookie, Value: "", Path: "/auth", MaxAge: -1, HttpOnly: true, Secure: a.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode})
-	raw, err := a.box.OpenString(c.Value, flowCookie)
-	var fs flowState
-	if err != nil || json.Unmarshal([]byte(raw), &fs) != nil || a.now().Unix() > fs.Exp {
-		fail(http.StatusBadRequest, "login session invalid or expired; start again", err)
-		return
-	}
-	q := r.URL.Query()
-	if e := q.Get("error"); e != "" {
-		fail(http.StatusForbidden, "Authentik refused the login: "+e, nil)
-		return
-	}
-	if !secret.Equal(q.Get("state"), fs.State) {
-		fail(http.StatusBadRequest, "state mismatch", nil)
-		return
-	}
-	p, err := a.Provider(ctx)
-	if err != nil {
-		fail(http.StatusBadGateway, "Authentik unreachable", err)
-		return
-	}
-	tok, err := a.oauth(p).Exchange(a.ctx(ctx), q.Get("code"), oauth2.VerifierOption(fs.Verifier))
-	if err != nil {
-		fail(http.StatusForbidden, "code exchange failed", err)
-		return
-	}
-	rawID, _ := tok.Extra("id_token").(string)
-	if rawID == "" {
-		fail(http.StatusForbidden, "no id_token returned", nil)
-		return
-	}
-	idt, err := p.Verifier(&oidc.Config{ClientID: a.cfg.OIDCClientID, Now: a.now}).Verify(a.ctx(ctx), rawID)
-	if err != nil {
-		fail(http.StatusForbidden, "id_token verification failed", err)
-		return
-	}
-	var cl idClaims
-	if err := idt.Claims(&cl); err != nil || cl.Sub == "" {
-		fail(http.StatusForbidden, "id_token claims invalid", err)
-		return
-	}
-	if !secret.Equal(cl.Nonce, fs.Nonce) {
-		fail(http.StatusForbidden, "nonce mismatch", nil)
-		return
-	}
-	name := firstNonEmpty(cl.Username, cl.Name, cl.Email, cl.Sub)
-	if !slices.Contains(cl.Groups, a.cfg.OIDCAdminGroup) {
-		a.log.Warn("login denied: not in admin group", "user", name)
-		_ = a.audit.Write(ctx, audit.Actor{Sub: cl.Sub, Name: name}, "auth.login", "", nil, "denied", "not a member of "+a.cfg.OIDCAdminGroup)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>Access denied</title><body style="font-family:sans-serif;padding:2rem"><h1>Access denied</h1><p>Your Authentik account is not a member of the DZ Manager admin group.</p><form method="post" action="/auth/logout"><button>Sign out of Authentik</button></form></body>`))
-		return
-	}
-	uid, err := a.upsertUser(ctx, cl.Sub, name, cl.Email)
-	if err != nil {
-		fail(http.StatusInternalServerError, "could not record user", err)
-		return
-	}
-	token := secret.Token(32)
-	now := a.now().Unix()
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO sessions(id_hash,user_id,csrf,id_token,created_at,last_seen_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
-		a.box.Hash(token), uid, secret.Token(24), rawID, now, now, now+int64(absoluteTTL.Seconds())); err != nil {
-		fail(http.StatusInternalServerError, "could not create session", err)
-		return
-	}
-	_, _ = a.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ? OR last_seen_at < ?`, now, now-int64(idleTTL.Seconds()))
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: a.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode, MaxAge: int(absoluteTTL.Seconds())})
-	_ = a.audit.Write(ctx, audit.Actor{Sub: cl.Sub, Name: name}, "auth.login", "", nil, "ok", "")
-	http.Redirect(w, r, fs.Return, http.StatusFound)
-}
-
-func (a *Auth) upsertUser(ctx context.Context, sub, name, email string) (int64, error) {
-	ts := store.Now()
-	_, err := a.db.ExecContext(ctx, `INSERT INTO users(sub,username,email,created_at,last_login_at) VALUES(?,?,?,?,?)
-		ON CONFLICT(sub) DO UPDATE SET username=excluded.username, email=excluded.email, last_login_at=excluded.last_login_at`, sub, name, email, ts, ts)
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	err = a.db.QueryRowContext(ctx, `SELECT id FROM users WHERE sub=?`, sub).Scan(&id)
-	return id, err
-}
-
-// Logout ends the session (POST /auth/logout) and redirects to Authentik's end-session endpoint.
-func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "use POST", http.StatusMethodNotAllowed)
-		return
-	}
-	if !a.sameOrigin(r) {
-		http.Error(w, "cross-origin request refused", http.StatusForbidden)
-		return
-	}
-	idToken := ""
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		h := a.box.Hash(c.Value)
-		_ = a.db.QueryRowContext(r.Context(), `SELECT id_token FROM sessions WHERE id_hash=?`, h).Scan(&idToken)
-		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash=?`, h)
-	}
-	if u := FromContext(r.Context()); u != nil {
-		_ = a.audit.Write(r.Context(), u.Actor(), "auth.logout", "", nil, "ok", "")
-	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode})
-	target := "/"
-	if _, err := a.Provider(r.Context()); err == nil && a.endSess != "" {
-		v := url.Values{"post_logout_redirect_uri": {a.cfg.PublicURL.String() + "/"}, "client_id": {a.cfg.OIDCClientID}}
-		if idToken != "" {
-			v.Set("id_token_hint", idToken)
+func originOf(u string) string {
+	if i := strings.Index(u, "://"); i >= 0 {
+		rest := u[i+3:]
+		if j := strings.Index(rest, "/"); j >= 0 {
+			rest = rest[:j]
 		}
-		target = a.endSess + "?" + v.Encode()
+		return u[:i+3] + rest
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	return ""
 }
+
+// ---- cookies ----
+
+func (a *Auth) sessionCookieName() string {
+	if a.cfg.SecureCookies() {
+		return "__Host-dzm_session"
+	}
+	return "dzm_session"
+}
+
+func (a *Auth) pendingCookieName() string {
+	if a.cfg.SecureCookies() {
+		return "__Host-dzm_pending"
+	}
+	return "dzm_pending"
+}
+
+const flowCookie = "dzm_flow"
+
+func (a *Auth) setCookie(w http.ResponseWriter, name, value, path string, ttl time.Duration) {
+	c := &http.Cookie{Name: name, Value: value, Path: path, HttpOnly: true, Secure: a.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds())}
+	if value == "" {
+		c.MaxAge = -1
+	}
+	http.SetCookie(w, c)
+}
+
+// ---- sessions ----
 
 // errNoSession is returned when no valid session exists.
 var errNoSession = errors.New("no session")
 
-// Session resolves the request's session, extending idle expiry.
+const sessionUserCols = `u.id,u.sub,u.username,u.email,u.role,s.csrf,s.method,s.mfa_at,s.last_seen_at,s.expires_at`
+
+// createSession signs the user in. Every sign-in has just passed 2FA, so the
+// session starts with a fresh confirmation.
+func (a *Auth) createSession(ctx context.Context, w http.ResponseWriter, r *http.Request, uid int64, method string) error {
+	token := secret.Token(32)
+	now := a.now().Unix()
+	ua := r.UserAgent()
+	if len(ua) > 200 {
+		ua = ua[:200]
+	}
+	if _, err := a.db.ExecContext(ctx, `INSERT INTO sessions(id_hash,user_id,csrf,id_token,created_at,last_seen_at,expires_at,method,mfa_at,ip,user_agent) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		a.box.Hash(token), uid, secret.Token(24), "", now, now, now+int64(absoluteTTL.Seconds()), method, now, ClientIP(r), ua); err != nil {
+		return err
+	}
+	_, _ = a.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ? OR last_seen_at < ?`, now, now-int64(idleTTL.Seconds()))
+	_, _ = a.db.ExecContext(ctx, `UPDATE users SET last_login_at=?, failed_logins=0, locked_until=0 WHERE id=?`, store.Now(), uid)
+	a.setCookie(w, a.sessionCookieName(), token, "/", absoluteTTL)
+	a.setCookie(w, a.pendingCookieName(), "", "/", 0)
+	return nil
+}
+
+// Session resolves the request's session, extending idle expiry. Disabled
+// users and users whose role is unknown have no session.
 func (a *Auth) Session(r *http.Request) (*User, error) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := r.Cookie(a.sessionCookieName())
 	if err != nil || c.Value == "" {
 		return nil, errNoSession
 	}
 	h := a.box.Hash(c.Value)
 	now := a.now().Unix()
 	var u User
+	var role string
 	var lastSeen, expires int64
-	err = a.db.QueryRowContext(r.Context(), `SELECT u.id,u.sub,u.username,u.email,s.csrf,s.last_seen_at,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=?`, h).
-		Scan(&u.ID, &u.Sub, &u.Username, &u.Email, &u.CSRF, &lastSeen, &expires)
+	err = a.db.QueryRowContext(r.Context(), `SELECT `+sessionUserCols+` FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=? AND u.disabled_at IS NULL`, h).
+		Scan(&u.ID, &u.Sub, &u.Username, &u.Email, &role, &u.CSRF, &u.Method, &u.mfaAt, &lastSeen, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNoSession
 	}
 	if err != nil {
 		return nil, err
 	}
-	if now > expires || now-lastSeen > int64(idleTTL.Seconds()) {
+	if now > expires || now-lastSeen > int64(idleTTL.Seconds()) || !perm.ValidRole(role) {
 		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash=?`, h)
 		return nil, errNoSession
 	}
 	if now-lastSeen > 60 {
 		_, _ = a.db.ExecContext(r.Context(), `UPDATE sessions SET last_seen_at=? WHERE id_hash=?`, now, h)
 	}
+	u.Role = perm.Role(role)
+	u.Permissions = slices.Clone(perm.Of(u.Role))
+	u.sessionHash = h
+	u.StepUpUntil = time.Unix(u.mfaAt, 0).Add(StepUpTTL).UTC()
 	return &u, nil
+}
+
+// Logout ends the session (POST /auth/logout). OIDC sessions continue to the
+// provider's end-session endpoint.
+func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
+	if !a.sameOrigin(r) {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
+	method := ""
+	if u, err := a.Session(r); err == nil {
+		method = u.Method
+		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM sessions WHERE id_hash=?`, u.sessionHash)
+		_ = a.audit.Write(r.Context(), u.Actor(), "auth.logout", "", nil, "ok", "")
+	}
+	a.setCookie(w, a.sessionCookieName(), "", "/", 0)
+	target := "/"
+	if method == "oidc" && a.oidc != nil {
+		target = a.oidc.endSessionURL(r.Context())
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func (a *Auth) sameOrigin(r *http.Request) bool {
@@ -335,12 +275,12 @@ func (a *Auth) RequireAPI(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.Session(r)
 		if err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "authentication required")
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "authentication required"})
 			return
 		}
 		if !safeMethod(r.Method) {
 			if !a.sameOrigin(r) || !secret.Equal(r.Header.Get(CSRFHeader), u.CSRF) {
-				writeJSONError(w, http.StatusForbidden, "CSRF check failed")
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "CSRF check failed"})
 				return
 			}
 		}
@@ -348,15 +288,28 @@ func (a *Auth) RequireAPI(next http.Handler) http.Handler {
 	})
 }
 
-// RequirePage protects HTML pages: redirect to login without a session.
-func (a *Auth) RequirePage(next http.Handler) http.Handler {
+// Authorize checks the signed-in user's role against the permission of the
+// mux route the request matches. Routes without a rule are refused for
+// everyone. Sensitive routes also need a 2FA confirmation from the last
+// StepUpTTL; the response then carries "step_up": true so the UI can ask.
+func (a *Auth) Authorize(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, err := a.Session(r)
-		if err != nil {
-			http.Redirect(w, r, "/auth/login?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		u := FromContext(r.Context())
+		_, pattern := mux.Handler(r)
+		p, stepUp, ok := perm.Resolve(pattern, r)
+		if u == nil || !ok {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "this route has no permission rule"})
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))
+		if !u.Can(p) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "your role (" + string(u.Role) + ") does not allow this", "permission": p})
+			return
+		}
+		if stepUp && a.now().Unix()-u.mfaAt > int64(StepUpTTL.Seconds()) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "confirm with your 2FA code to continue", "step_up": true})
+			return
+		}
+		mux.ServeHTTP(w, r)
 	})
 }
 
@@ -390,8 +343,100 @@ func firstNonEmpty(v ...string) string {
 	return ""
 }
 
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ClientIP is the visitor's address: the Cloudflare or proxy header when the
+// direct peer is a local proxy (loopback or private network), else the peer.
+func ClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+		if v := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); net.ParseIP(v) != nil {
+			return v
+		}
+		if v := r.Header.Get("X-Forwarded-For"); v != "" {
+			first := strings.TrimSpace(strings.Split(v, ",")[0])
+			if net.ParseIP(first) != nil {
+				return first
+			}
+		}
+	}
+	return host
+}
+
+// ---- throttling ----
+
+// failWindow counts failed sign-ins per IP in a sliding window.
+type failWindow struct {
+	mu     sync.Mutex
+	max    int
+	window time.Duration
+	hits   map[string][]time.Time
+}
+
+func newFailWindow(max int, window time.Duration) *failWindow {
+	return &failWindow{max: max, window: window, hits: map[string][]time.Time{}}
+}
+
+func (f *failWindow) blocked(key string, now time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.prune(key, now)
+	return len(f.hits[key]) >= f.max
+}
+
+func (f *failWindow) add(key string, now time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.hits) > 10000 {
+		f.hits = map[string][]time.Time{}
+	}
+	f.prune(key, now)
+	f.hits[key] = append(f.hits[key], now)
+}
+
+func (f *failWindow) prune(key string, now time.Time) {
+	h := f.hits[key]
+	i := 0
+	for i < len(h) && now.Sub(h[i]) > f.window {
+		i++
+	}
+	if i == len(h) {
+		delete(f.hits, key)
+		return
+	}
+	f.hits[key] = h[i:]
+}
+
+// accountLocked reports whether a user is temporarily locked after failures.
+func (a *Auth) accountLocked(ctx context.Context, uid int64) (time.Duration, bool) {
+	var until int64
+	_ = a.db.QueryRowContext(ctx, `SELECT locked_until FROM users WHERE id=?`, uid).Scan(&until)
+	if d := time.Unix(until, 0).Sub(a.now()); d > 0 {
+		return d, true
+	}
+	return 0, false
+}
+
+// failLogin records a failed password or 2FA attempt: per IP, and per account
+// with a lock that doubles from 30 s after 5 failures, up to an hour.
+func (a *Auth) failLogin(ctx context.Context, r *http.Request, uid int64, actor audit.Actor, why string) {
+	a.ipFails.add(ClientIP(r), a.now())
+	if uid > 0 {
+		var n int
+		_ = a.db.QueryRowContext(ctx, `UPDATE users SET failed_logins=failed_logins+1 WHERE id=? RETURNING failed_logins`, uid).Scan(&n)
+		if n >= 5 {
+			lock := 30 * time.Second << min(n-5, 7)
+			lock = min(lock, time.Hour)
+			_, _ = a.db.ExecContext(ctx, `UPDATE users SET locked_until=? WHERE id=?`, a.now().Add(lock).Unix(), uid)
+		}
+	}
+	_ = a.audit.Write(ctx, actor, "auth.login", "", map[string]any{"ip": ClientIP(r)}, "denied", why)
 }

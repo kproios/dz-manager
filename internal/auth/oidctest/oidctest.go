@@ -23,7 +23,7 @@ type User struct {
 	Groups               []string
 }
 
-// Issuer is a fake Authentik.
+// Issuer is a fake OpenID Connect provider.
 type Issuer struct {
 	Server   *httptest.Server
 	ClientID string
