@@ -18,7 +18,10 @@ import (
 	_ "time/tzdata" // DZM_TZ works on hosts and images without a zoneinfo database
 
 	"github.com/kproios/dz-manager/internal/app"
+	"github.com/kproios/dz-manager/internal/audit"
+	"github.com/kproios/dz-manager/internal/auth"
 	"github.com/kproios/dz-manager/internal/config"
+	"github.com/kproios/dz-manager/internal/secret"
 	"github.com/kproios/dz-manager/internal/store"
 	"github.com/kproios/dz-manager/internal/worldmap"
 )
@@ -64,6 +67,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "dzm map:", err)
 			os.Exit(1)
 		}
+	case "admin":
+		if err := adminCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "dzm admin:", err)
+			os.Exit(1)
+		}
 	case "check-config":
 		if err := checkConfig(); err != nil {
 			fmt.Fprintln(os.Stderr, "dzm: config check FAILED:\n"+err.Error())
@@ -82,8 +90,11 @@ func usage() {
 commands:
   serve         run the HTTP server (applies DB migrations first)
   version       print the version
-  check-config  validate environment, data directory and OIDC discovery
+  check-config  validate environment, data directory and OIDC discovery (when set)
   health        exit 0 if the local server answers /ready (container health checks)
+  admin invite-owner [--days N] [--note TEXT]
+                print a one-time link that creates an owner account (first
+                setup, or a way back in when every owner lost their 2FA)
   map list      list the terrain maps on dzhosts.com
   map install   install map tiles for a world:
                   dzm map install --world chernarusplus            (best size from dzhosts.com)
@@ -234,18 +245,58 @@ func checkConfig() error {
 		f.Close()
 		os.Remove(f.Name())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, cfg.OIDCIssuer+"/.well-known/openid-configuration", nil)
-	if resp, err := http.DefaultClient.Do(req); err != nil {
-		errs = append(errs, fmt.Errorf("OIDC discovery: %w", err))
-	} else {
-		resp.Body.Close()
-		if resp.StatusCode != 200 {
-			errs = append(errs, fmt.Errorf("OIDC discovery returned HTTP %d", resp.StatusCode))
+	if cfg.OIDCIssuer != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.OIDCIssuer, "/")+"/.well-known/openid-configuration", nil)
+		if resp, err := http.DefaultClient.Do(req); err != nil {
+			errs = append(errs, fmt.Errorf("OIDC discovery: %w", err))
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				errs = append(errs, fmt.Errorf("OIDC discovery returned HTTP %d", resp.StatusCode))
+			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func adminCmd(args []string) error {
+	if len(args) == 0 || args[0] != "invite-owner" {
+		return errors.New("use 'dzm admin invite-owner [--days N] [--note TEXT]'")
+	}
+	fs := flag.NewFlagSet("admin invite-owner", flag.ContinueOnError)
+	days := fs.Int("days", 1, "how many days the link stays valid (1-7)")
+	note := fs.String("note", "created on the command line", "note shown in Settings → Users")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *days < 1 || *days > 7 {
+		return errors.New("--days must be 1 to 7")
+	}
+	cfg, err := config.FromEnv(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("invalid configuration (run it with the same environment as the service):\n%w", err)
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	box, err := secret.New(cfg.SecretKey)
+	if err != nil {
+		return err
+	}
+	al := audit.New(db)
+	a := auth.New(cfg, db, box, al, logger("error"))
+	id, link, err := a.CreateInvite(ctx, "owner", *note, "command line", time.Duration(*days)*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	_ = al.Write(ctx, audit.Actor{Sub: "cli", Name: "command line"}, "users.invite", id, map[string]any{"role": "owner", "days": *days}, "ok", "")
+	fmt.Printf("Open this link within %d day(s) to create an owner account (it works once):\n\n  %s\n\n", *days, link)
+	return nil
 }
 
 func serve() error {

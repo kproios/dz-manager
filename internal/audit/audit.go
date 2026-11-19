@@ -53,17 +53,17 @@ func (l *Log) Write(ctx context.Context, a Actor, action, target string, params 
 	return err
 }
 
-// List returns the newest entries first.
-func (l *Log) List(ctx context.Context, limit int, beforeID int64) ([]Entry, error) {
+// List returns the newest entries first; a non-empty actorSub limits it to that actor.
+func (l *Log) List(ctx context.Context, limit int, beforeID int64, actorSub string) ([]Entry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	var rows *sql.Rows
 	var err error
 	if beforeID > 0 {
-		rows, err = l.db.QueryContext(ctx, `SELECT id,ts,actor_sub,actor_name,action,target,params,result,detail FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT ?`, beforeID, limit)
+		rows, err = l.db.QueryContext(ctx, `SELECT id,ts,actor_sub,actor_name,action,target,params,result,detail FROM audit_log WHERE id < ? AND (?='' OR actor_sub=?) ORDER BY id DESC LIMIT ?`, beforeID, actorSub, actorSub, limit)
 	} else {
-		rows, err = l.db.QueryContext(ctx, `SELECT id,ts,actor_sub,actor_name,action,target,params,result,detail FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
+		rows, err = l.db.QueryContext(ctx, `SELECT id,ts,actor_sub,actor_name,action,target,params,result,detail FROM audit_log WHERE (?='' OR actor_sub=?) ORDER BY id DESC LIMIT ?`, actorSub, actorSub, limit)
 	}
 	if err != nil {
 		return nil, err

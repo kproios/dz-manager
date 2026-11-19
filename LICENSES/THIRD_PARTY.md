@@ -9,9 +9,11 @@ honoured and notices kept here. It contains no proprietary third-party code.
 | github.com/woozymasta/bercon | MIT | BattlEye RCON client and response parser |
 | github.com/woozymasta/a2s | MIT | A2S server query |
 | github.com/woozymasta/dzid | MIT | Steam64 → BattlEye GUID / DayZ ID |
-| github.com/coreos/go-oidc/v3 | Apache-2.0 | OpenID Connect (SSO) |
+| github.com/coreos/go-oidc/v3 | Apache-2.0 | Optional OpenID Connect sign-in |
 | github.com/go-jose/go-jose/v4 | Apache-2.0 | JOSE/JWT (via go-oidc) |
 | golang.org/x/oauth2 | BSD-3-Clause | OAuth2 client |
+| golang.org/x/crypto (argon2) | BSD-3-Clause | Password hashing (argon2id) |
+| rsc.io/qr | BSD-3-Clause | QR code for setting up 2FA |
 | modernc.org/sqlite (+ modernc.org/libc etc.) | BSD-3-Clause | Pure-Go SQLite |
 | github.com/google/uuid, dustin/go-humanize, mattn/go-isatty, ncruces/go-strftime, remyoudompheng/bigfft | BSD/MIT | transitive (sqlite) |
 

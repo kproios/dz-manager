@@ -29,10 +29,14 @@ type Config struct {
 	// all interfaces inside the container and the host publishes the port.
 	Container bool
 
+	// Optional OpenID Connect provider, offered as one more sign-in method.
+	// Who may sign in and with which role is decided in DZ Manager.
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
-	OIDCAdminGroup   string
+	OIDCLabel        string
+	// SteamLogin offers "Sign in with Steam" (on unless DZM_STEAM_LOGIN=0).
+	SteamLogin bool
 }
 
 // SecureCookies reports whether cookies must carry the Secure attribute.
@@ -61,7 +65,8 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		OIDCIssuer:       get("DZM_OIDC_ISSUER", ""),
 		OIDCClientID:     get("DZM_OIDC_CLIENT_ID", ""),
 		OIDCClientSecret: get("DZM_OIDC_CLIENT_SECRET", ""),
-		OIDCAdminGroup:   get("DZM_OIDC_ADMIN_GROUP", "dzm-admins"),
+		OIDCLabel:        get("DZM_OIDC_LABEL", "Single sign-on"),
+		SteamLogin:       get("DZM_STEAM_LOGIN", "1") != "0",
 	}
 
 	c.Container = get("DZM_CONTAINER", "") == "1"
@@ -99,10 +104,18 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	c.PublicURL = parseURL("DZM_PUBLIC_URL", get("DZM_PUBLIC_URL", ""), &errs)
 	c.IngestPublicURL = parseURL("DZM_INGEST_PUBLIC_URL", get("DZM_INGEST_PUBLIC_URL", ""), &errs)
 
-	if c.OIDCIssuer == "" || c.OIDCClientID == "" || c.OIDCClientSecret == "" {
-		errs = append(errs, errors.New("DZM_OIDC_ISSUER, DZM_OIDC_CLIENT_ID and DZM_OIDC_CLIENT_SECRET are required (login is through your OpenID Connect provider, e.g. SSO, Keycloak, Authelia)"))
-	} else if u, err := url.Parse(c.OIDCIssuer); err != nil || u.Host == "" || (u.Scheme != "https" && !isLoopbackHost(u.Hostname())) {
-		errs = append(errs, errors.New("DZM_OIDC_ISSUER must be an https URL"))
+	// OpenID Connect is optional: all three values or none.
+	switch n := countSet(c.OIDCIssuer, c.OIDCClientID, c.OIDCClientSecret); {
+	case n == 0:
+	case n < 3:
+		errs = append(errs, errors.New("DZM_OIDC_ISSUER, DZM_OIDC_CLIENT_ID and DZM_OIDC_CLIENT_SECRET go together: set all three to offer single sign-on, or none"))
+	default:
+		if u, err := url.Parse(c.OIDCIssuer); err != nil || u.Host == "" || (u.Scheme != "https" && !isLoopbackHost(u.Hostname())) {
+			errs = append(errs, errors.New("DZM_OIDC_ISSUER must be an https URL"))
+		}
+	}
+	if len(c.OIDCLabel) > 40 {
+		errs = append(errs, errors.New("DZM_OIDC_LABEL must be at most 40 characters"))
 	}
 
 	tz := get("DZM_TZ", "Europe/Helsinki")
@@ -133,6 +146,16 @@ func parseURL(name, raw string, errs *[]error) *url.URL {
 		return nil
 	}
 	return u
+}
+
+func countSet(v ...string) int {
+	n := 0
+	for _, s := range v {
+		if s != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func isLoopbackHost(h string) bool {

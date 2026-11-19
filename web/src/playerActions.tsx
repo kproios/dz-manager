@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ActionAvail, api, MapState, Marker, MzVehicle } from './api'
+import { ActionAvail, api, MapState, Marker, MzVehicle, Permission } from './api'
+import { useCan } from './auth'
 import { useApi } from './hooks'
 import { useNotify } from './App'
 import { usePref } from './prefs'
@@ -78,6 +79,7 @@ export function TpHere({ targets, onGo, ended, death }: { targets: Target[]; onG
 /** Teleport to a stored position from a page without a map (event log, player history). */
 export function TeleportButton({ x, z, label, death }: { x: number; z: number; label: string; death?: boolean }) {
   const [open, setOpen] = useState(false)
+  if (!useCan()('actions.safe')) return null
   return <>
     <button className="small ghost" title={`Teleport a player to ${label}`} aria-label={`Teleport a player to ${label}`} onClick={() => setOpen(true)}><Icon name="teleport" /></button>
     {open && <TeleportDialog x={x} z={z} label={label} death={death} onClose={() => setOpen(false)} />}
@@ -130,7 +132,9 @@ export function VehicleActions({ vehicle }: { vehicle: MzVehicle }) {
       notify(`${a.label} failed: ${e.message}`, 'bad')
     } finally { setBusy(false) }
   }
-  const list = acts.data ?? []
+  const can = useCan()
+  const list = (acts.data ?? []).filter((a) => can(a.destructive ? 'actions.strong' : 'actions.safe'))
+  if (acts.data && !list.length) return null
   return (
     <div className="qa-section">
       <h4>Vehicle</h4>
@@ -151,12 +155,19 @@ export function VehicleActions({ vehicle }: { vehicle: MzVehicle }) {
 
 type Mode = 'message' | 'kick' | 'teleport' | 'give_item' | 'heal' | 'kill' | 'strip' | null
 
+// The role permission each button needs (the server checks it too).
+const ACTION_PERM: Record<Exclude<Mode, null>, Permission> = {
+  message: 'players.moderate', kick: 'players.moderate', heal: 'actions.safe', teleport: 'actions.safe',
+  give_item: 'actions.strong', kill: 'actions.strong', strip: 'actions.strong',
+}
+
 export function PlayerActions({ target, layout = 'row', dests = [], players = [], onPick, only }: {
   target: Target; layout?: 'row' | 'grid'; dests?: Dest[]; players?: Target[]; onPick?: () => void; only?: Exclude<Mode, null>[]
 }) {
   const acts = useApi<ActionAvail[]>('/api/actions', ['capabilities'])
   const run = useRunAction()
   const notify = useNotify()
+  const can = useCan()
   const [mode, setMode] = useState<Mode>(null)
   const [busy, setBusy] = useState(false)
   const [text, setText] = useState('')
@@ -167,7 +178,7 @@ export function PlayerActions({ target, layout = 'row', dests = [], players = []
   const close = () => { setMode(null); setText(''); setDest(''); setBusy(false) }
 
   const btn = (m: Exclude<Mode, null>, icon: IconName, label: string, opts: { danger?: boolean; disabled?: boolean; why?: string } = {}) => {
-    if (only && !only.includes(m)) return null
+    if ((only && !only.includes(m)) || !can(ACTION_PERM[m])) return null
     const a = av(m)
     const rcon = m === 'message' || m === 'kick'
     const noSteam = !rcon && !target.steam64

@@ -29,6 +29,7 @@ adding protection.
 | `dzm version` | Prints the version (same as `VERSION`) and exits 0. Must not touch the DB. |
 | `dzm serve` | Runs the HTTP server. Applies pending DB migrations at startup, before `/ready` returns 200. |
 | `dzm check-config` | Validates the environment and the data directory, then exits 0 or 1. Use it for preflight. |
+| `dzm admin invite-owner` | Prints a one-time link that creates an owner account (first setup, or recovery). Same environment as the service. |
 
 ## 3. Environment (`/etc/dzm/dzm.env`, mode 0640 root:dzm)
 
@@ -37,12 +38,13 @@ adding protection.
 | `DZM_LISTEN` | no | `127.0.0.1:8080` | Listener. Must stay on loopback (except in the Docker image). Ingress is only through a tunnel or reverse proxy. |
 | `DZM_DATA_DIR` | no | `/var/lib/dzm` | SQLite DB, tiles, backups, updater status. |
 | `DZM_SECRET_KEY` | **yes** | – | 32-byte base64 key that encrypts stored game-server secrets (RCON password, ingest tokens) at rest. Missing or invalid key: refuse to start. **The owner keeps a copy in their password manager, because a DB backup is useless without it.** |
-| `DZM_PUBLIC_URL` | yes | – | `https://dzm.example.com`. Used for the OIDC redirect URI (`<url>/auth/callback`), cookie scope and CSRF origin checks. |
+| `DZM_PUBLIC_URL` | yes | – | `https://dzm.example.com`. Used for sign-in redirects (Steam, OIDC `<url>/auth/callback`), invite links, cookie scope and CSRF origin checks. |
 | `DZM_INGEST_PUBLIC_URL` | yes | – | `https://dzm-ingest.example.com` (shown to the operator when configuring the game-side mods). |
-| `DZM_OIDC_ISSUER` | **yes** | – | SSO issuer URL of the DZ Manager provider, e.g. `https://<sso-host>/application/o/dz-manager/`. Must be reachable from the host. |
-| `DZM_OIDC_CLIENT_ID` | **yes** | – | SSO OAuth2/OIDC provider client ID. |
-| `DZM_OIDC_CLIENT_SECRET` | **yes** | – | SSO confidential-client secret. |
-| `DZM_OIDC_ADMIN_GROUP` | no | `dzm-admins` | SSO group whose members may sign in. Everyone else is denied. |
+| `DZM_OIDC_ISSUER` | no | – | Optional single sign-on: OpenID Connect issuer URL, e.g. `https://<sso-host>/application/o/dz-manager/`. Set all three `DZM_OIDC_*` values or none. |
+| `DZM_OIDC_CLIENT_ID` | no | – | OIDC confidential-client ID. |
+| `DZM_OIDC_CLIENT_SECRET` | no | – | OIDC confidential-client secret. |
+| `DZM_OIDC_LABEL` | no | `Single sign-on` | Text of the sign-in button for the OIDC provider. |
+| `DZM_STEAM_LOGIN` | no | `1` | `0` hides "Sign in with Steam". |
 | `DZM_TZ` | no | `Europe/Helsinki` | Display and schedule timezone. Everything is stored in UTC. |
 | `DZM_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. JSON logs go to stdout (journald). |
 | `DZM_ALERT_WEBHOOK` | no | – | Optional ntfy/Discord-compatible URL for operational alerts. |
@@ -60,8 +62,9 @@ moving the game server to another provider does not need host access.
 | `GET /health` | none | 200 as soon as the process serves HTTP. Liveness only. |
 | `GET /ready` | none | 200 + `{"status":"ready","version":"vX.Y.Z"}` once the DB is open and migrated. 503 otherwise. The updater checks that `version` equals the tag it installed. |
 | `/ingest/…` | per-server credentials (Basic or token) | Game → DZ Manager telemetry and command polling. It is the **only** path published on the ingest hostname. |
-| `/auth/login`, `/auth/callback`, `/auth/logout` | none | OIDC authorization-code + PKCE flow against SSO. |
-| everything else | session created **only** by a successful SSO login | UI, API, SSE. There are no local passwords. |
+| `/auth/…` | none | Sign-in: password, Steam OpenID, optional OIDC (authorization code + PKCE, callback `/auth/callback`), each followed by TOTP 2FA; invites; logout. See [accounts](../accounts.md). |
+| `/` and `/assets/…` | none | The UI shell; it holds no data and shows the sign-in page until signed in. |
+| `/api/…`, `/tiles/…` | session created **only** after both sign-in factors | API and SSE. Each `/api` route also needs its role permission (`internal/perm`). |
 
 `/health` and `/ready` expose no secrets and no game data.
 

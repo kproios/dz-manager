@@ -20,6 +20,7 @@ import (
 	"github.com/kproios/dz-manager/internal/caps"
 	"github.com/kproios/dz-manager/internal/config"
 	"github.com/kproios/dz-manager/internal/httpx"
+	"github.com/kproios/dz-manager/internal/perm"
 	"github.com/kproios/dz-manager/internal/profiles"
 	"github.com/kproios/dz-manager/internal/store"
 	"github.com/kproios/dz-manager/internal/web"
@@ -62,7 +63,7 @@ func New(s *Server) *Server {
 	s.API.HandleFunc("GET /api/status", s.status)
 	s.API.HandleFunc("GET /api/audit", s.auditList)
 	s.API.HandleFunc("GET /api/audit/search", func(w http.ResponseWriter, r *http.Request) {
-		page, err := s.Audit.Search(r.Context(), httpx.QueryInt(r, "limit", 25), int64(httpx.QueryInt(r, "before", 0)), r.URL.Query().Get("q"), r.URL.Query().Get("result"))
+		page, err := s.Audit.Search(r.Context(), httpx.QueryInt(r, "limit", 25), int64(httpx.QueryInt(r, "before", 0)), r.URL.Query().Get("q"), r.URL.Query().Get("result"), auditScope(r))
 		if err != nil {
 			httpx.Error(w, 500, err.Error())
 			return
@@ -73,6 +74,7 @@ func New(s *Server) *Server {
 	s.API.HandleFunc("GET /api/prefs", s.getPrefs)
 	s.API.HandleFunc("PUT /api/prefs", s.putPrefs)
 	s.API.Handle("GET /api/stream", s.Hub)
+	s.Auth.RegisterAPI(s.API)
 	s.API.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
 	s.Ingest.HandleFunc("POST /ingest/ping", s.ingestPing)
 	s.Ingest.HandleFunc("/ingest/", func(w http.ResponseWriter, r *http.Request) { httpx.Error(w, 404, "not found") })
@@ -101,10 +103,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		httpx.JSON(w, 200, map[string]string{"status": "ready", "version": s.Version})
 	})
-	root.HandleFunc("GET /auth/login", s.Auth.Login)
-	root.HandleFunc("GET /auth/callback", s.Auth.Callback)
-	root.Handle("POST /auth/logout", s.Auth.OptionalUser(http.HandlerFunc(s.Auth.Logout)))
-	root.Handle("/api/", s.Auth.RequireAPI(s.API))
+	s.Auth.Register(root)
+	// Session + CSRF, then the role's permission for the matched route.
+	root.Handle("/api/", s.Auth.RequireAPI(s.Auth.Authorize(s.API)))
 	root.Handle("/ingest/", s.limiter.wrap(http.MaxBytesHandler(s.Ingest, 4<<20)))
 	root.Handle("/public/", s.limiter.wrap(http.MaxBytesHandler(publicCORS(s.Public), 64<<10)))
 	if s.MCP != nil {
@@ -114,7 +115,9 @@ func (s *Server) Handler() http.Handler {
 	static := http.FileServerFS(web.FS())
 	root.Handle("GET /assets/", static)
 	root.Handle("GET /tiles/", s.Auth.RequireAPI(http.StripPrefix("/tiles/", http.FileServer(http.Dir(filepath.Join(s.Cfg.DataDir, "tiles"))))))
-	root.Handle("/", s.Auth.RequirePage(http.HandlerFunc(s.spa)))
+	// The UI shell is public (it holds no data); it shows the sign-in page
+	// until /api/me answers.
+	root.Handle("/", http.HandlerFunc(s.spa))
 	return s.securityHeaders(s.logRequests(root))
 }
 
@@ -160,23 +163,12 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https://*.steamstatic.com https://flagcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' "+originOf(s.Cfg.OIDCIssuer))
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob: https://*.steamstatic.com https://flagcdn.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' "+s.Auth.FormActionOrigin())
 		if s.Cfg.SecureCookies() {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func originOf(u string) string {
-	if i := strings.Index(u, "://"); i >= 0 {
-		rest := u[i+3:]
-		if j := strings.Index(rest, "/"); j >= 0 {
-			rest = rest[:j]
-		}
-		return u[:i+3] + rest
-	}
-	return ""
 }
 
 type statusRecorder struct {
@@ -222,8 +214,18 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, auth.FromContext(r.Context()))
 }
 
+// auditScope limits the audit log to the user's own entries unless their
+// role may see everything.
+func auditScope(r *http.Request) string {
+	u := auth.FromContext(r.Context())
+	if u.Can(perm.UsersManage) {
+		return ""
+	}
+	return u.Sub
+}
+
 func (s *Server) auditList(w http.ResponseWriter, r *http.Request) {
-	es, err := s.Audit.List(r.Context(), httpx.QueryInt(r, "limit", 100), int64(httpx.QueryInt(r, "before", 0)))
+	es, err := s.Audit.List(r.Context(), httpx.QueryInt(r, "limit", 100), int64(httpx.QueryInt(r, "before", 0)), auditScope(r))
 	if err != nil {
 		httpx.Error(w, 500, err.Error())
 		return

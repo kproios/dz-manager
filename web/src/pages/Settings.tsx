@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { api, Profile } from '../api'
+import { api, Permission, Profile } from '../api'
+import { useCan } from '../auth'
 import { useApi } from '../hooks'
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, IdValue, PageHead, Pager, Seg, SteamId, Trunc, usePaged } from '../ui'
 import { Icon } from '../icons'
@@ -52,8 +53,14 @@ const TABS: [SettingsTab, string, IconName, string][] = [
   ['data', 'Data', 'audit', 'Retention and archives'],
 ]
 
-function Tabs({ value, onChange }: { value: SettingsTab; onChange: (t: SettingsTab) => void }) {
-  return <div className="tabs full" role="tablist" aria-label="Settings sections">{TABS.map(([k, l, i, d]) => <button key={k} role="tab" aria-selected={value === k} title={d} onClick={() => onChange(k)}><Icon name={i} />{l}</button>)}</div>
+// Which permission shows each tab (any of them); the server checks every call.
+const TAB_PERMS: Record<SettingsTab, Permission[]> = {
+  server: ['servers.manage'], players: ['settings.manage', 'bans.manage'], map: ['settings.manage'],
+  messages: ['settings.manage'], integrations: ['settings.manage', 'servers.manage'], data: ['settings.manage'],
+}
+
+function Tabs({ tabs, value, onChange }: { tabs: typeof TABS; value: SettingsTab; onChange: (t: SettingsTab) => void }) {
+  return <div className="tabs full" role="tablist" aria-label="Settings sections">{tabs.map(([k, l, i, d]) => <button key={k} role="tab" aria-selected={value === k} title={d} onClick={() => onChange(k)}><Icon name={i} />{l}</button>)}</div>
 }
 
 export default function Settings() {
@@ -94,12 +101,15 @@ export default function Settings() {
     </label>
   )
   const b = bridge.data
-  const [tab, setTab] = usePref<SettingsTab>('settings.tab', 'server')
+  const [savedTab, setTab] = usePref<SettingsTab>('settings.tab', 'server')
+  const can = useCan()
+  const tabs = TABS.filter(([k]) => TAB_PERMS[k].some(can))
+  const tab = tabs.some(([k]) => k === savedTab) ? savedTab : tabs[0]?.[0]
 
   return (
     <>
       <PageHead title="Settings" />
-      <Tabs value={tab} onChange={setTab} />
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
       {tab === 'server' && <>
       <Card title="Game servers" actions={<button className="small primary" onClick={() => setEdit({ ...blank })}><Icon name="plus" />Add server</button>}>
         <ErrorBox error={profiles.error} />
@@ -142,10 +152,10 @@ export default function Settings() {
         ) : <p className="muted">Download DZMBridge.zip from the latest GitHub release, install it as a server mod and paste the config from “Connect…”. The game-side PBO is not auto-updated: compare the installed version after each release.</p>}
       </Card>
       </>}
-      {tab === 'players' && <><PlayerChecks /><PriorityQueue /></>}
+      {tab === 'players' && <>{can('settings.manage') && <PlayerChecks />}{can('bans.manage') && <PriorityQueue />}</>}
       {tab === 'map' && <MapTrackingSettings bridge={b} />}
       {tab === 'messages' && <AutoMessages />}
-      {tab === 'integrations' && <><ApiKeys /><DiscordChannels /><BotInfo /></>}
+      {tab === 'integrations' && <>{can('servers.manage') && <ApiKeys />}{can('settings.manage') && <><DiscordChannels /><BotInfo /></>}</>}
       {tab === 'data' && <Retention />}
       {edit && (
         <Confirm title={edit.id ? `Edit ${edit.name || 'server'}` : 'Add a server'} tone="primary" confirmLabel={edit.id ? 'Save changes' : 'Add server'} busy={saving} disabled={Object.keys(errs).length > 0} onClose={() => setEdit(null)} onConfirm={save} body={

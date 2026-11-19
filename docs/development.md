@@ -8,23 +8,23 @@ go vet ./... && go test ./...                                                # i
 bash mod/build.sh dev                                                        # dist/DZMBridge.zip
 ```
 
-## Run locally without SSO
-`cmd/dzm-devoidc` is a fake SSO for development only. It is not part of any release, and the
-production binary has no dev-login path.
+## Run locally
 ```bash
-go run ./cmd/dzm-devoidc            # prints DZM_OIDC_* values; keep it running
 export DZM_DATA_DIR=$PWD/.data DZM_SECRET_KEY=$(head -c32 /dev/urandom | base64) \
-       DZM_PUBLIC_URL=http://127.0.0.1:8080 DZM_INGEST_PUBLIC_URL=http://127.0.0.1:8080 \
-       DZM_OIDC_ISSUER=… DZM_OIDC_CLIENT_ID=dzm-test DZM_OIDC_CLIENT_SECRET=s3cret
+       DZM_PUBLIC_URL=http://localhost:8080 DZM_INGEST_PUBLIC_URL=http://localhost:8080
 mkdir -p .data && go run ./cmd/dzm serve
+go run ./cmd/dzm admin invite-owner   # in another shell: open the link, set a password and optionally enable 2FA
 ```
 Plain `http://` is accepted only for loopback URLs (tests and dev). Production URLs must be https.
+To try single sign-on, `go run ./cmd/dzm-devoidc` is a fake OpenID Connect provider (development
+only, never in a release); add the `DZM_OIDC_*` values it prints, then link it under Account.
 
 ## Layout
 | Path | What |
 |---|---|
-| `cmd/dzm` | the binary (serve, version, check-config) |
-| `internal/auth` | SSO OIDC login, sessions, CSRF |
+| `cmd/dzm` | the binary (serve, version, check-config, admin invite-owner) |
+| `internal/auth` | accounts: password/Steam/OIDC sign-in, TOTP 2FA, invites, sessions, CSRF |
+| `internal/perm` | roles and the permission of every API route (deny by default) |
 | `internal/profiles` | server profiles + connect wizard (#20) |
 | `internal/rcon` | RCON + A2S connector (#15) |
 | `internal/metricz` | MetricZ receiver, live map state, perf (#5) |

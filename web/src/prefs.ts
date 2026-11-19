@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from './api'
 import { onStream, RESYNC } from './hooks'
 
-// Per-user UI preferences, stored server-side (/api/prefs, keyed by the SSO
-// subject) so they survive refreshes, sign-outs and other PCs. localStorage only
+// Per-user UI preferences, stored server-side (/api/prefs, keyed by the user)
+// so they survive refreshes, sign-outs and other PCs. localStorage only
 // mirrors the last value for an instant first paint.
 type Prefs = Record<string, unknown>
 const LS = 'dzm.prefs'
