@@ -8,7 +8,7 @@ sign-in, optional single sign-on). Works on any map, official or Workshop.
 - Architecture: [ADR 0001](docs/adr/0001-architecture.md)
 - Contracts: [host ⇄ release](docs/contracts/host-and-release.md) · [game ingest v1](docs/contracts/ingest-v1.md)
 - Guides: [accounts, sign-in and roles](docs/accounts.md) · [game-side mod and map image](docs/install-game-side.md) · [public API and MCP](docs/api.md) · [Docker](docs/docker.md) · [providers](docs/providers.md)
-- [Development](docs/development.md) · Constitution: issue #1 · Roadmap: issue #2
+- [Development](docs/development.md) · Licence: [MIT](LICENSE) (third-party notices in [LICENSES](LICENSES/THIRD_PARTY.md))
 
 | Feature | Needs |
 |---|---|
