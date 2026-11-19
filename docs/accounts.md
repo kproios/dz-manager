@@ -1,8 +1,8 @@
 # Accounts, sign-in and roles
 
 DZ Manager keeps its own accounts. Nobody needs an identity provider: people sign in with a
-password or their Steam account, and every sign-in also asks for a code from an authenticator app
-(2FA). Roles and invites live in DZ Manager, under **Users**.
+password or their Steam account. Authenticator codes (2FA) are optional per account. Roles and
+invites live in DZ Manager, under **Users**.
 
 ## First owner
 
@@ -12,15 +12,15 @@ On a new install there are no accounts. On the server, run (same environment as 
 dzm admin invite-owner                    # Docker: docker exec dzm dzm admin invite-owner
 ```
 
-It prints a one-time link, valid for a day. Open it, pick your name and a password (or Steam), then
-set up 2FA. Run the command again whenever every owner has lost their phone *and* their recovery
+It prints a one-time link, valid for a day. Open it, pick your name and a password (or Steam), and
+sign in. You can turn on 2FA later under Account. Run the command again whenever every owner has lost their phone *and* their recovery
 codes: it makes a new owner account, and the old one can then be reset under Users.
 
 ## Inviting people
 
 **Users → Invite someone**: pick the role, an optional note, and how long the link stays valid
 (1, 2 or 7 days). The link works once and is shown only then. The person picks their name and how
-they sign in, then sets up 2FA. Open invites can be cancelled.
+they sign in. They can turn on 2FA under Account. Open invites can be cancelled.
 
 ## Sign-in methods
 
@@ -30,8 +30,15 @@ they sign in, then sets up 2FA. Open invites can be cancelled.
 | Steam | On by default; `DZM_STEAM_LOGIN=0` turns it off. Only Steam accounts linked to a DZ Manager account get in. |
 | Single sign-on (OpenID Connect) | Optional: set `DZM_OIDC_ISSUER`, `DZM_OIDC_CLIENT_ID`, `DZM_OIDC_CLIENT_SECRET` (redirect URI `<DZM_PUBLIC_URL>/auth/callback`) and `DZM_OIDC_LABEL` for the button. The provider only proves who someone is; their role comes from DZ Manager, and the account must be invited or linked first. |
 
-Every method is followed by the authenticator code (or a one-time recovery code). Each account can
-link several methods under **Account**, as long as one is left.
+When 2FA is enabled, every method is followed by an authenticator code (or a one-time recovery
+code). With 2FA off, the sign-in method completes the login directly. Each account can link
+several methods under **Account**, as long as one is left.
+
+Under **Account → Two-step check**, use **Turn on 2FA** to enroll, or **Turn off 2FA** to disable it.
+Disabling requires a recent 2FA confirmation while it is enabled. Enabling, replacing or disabling
+2FA signs out other sessions. Disabling also invalidates all recovery codes. Accounts that
+already enabled 2FA keep it enabled after an update; pending setup from an older release offers
+**Set up later**.
 
 ## Roles
 
@@ -56,8 +63,9 @@ everyone, and a test fails the build when a route is added without a rule.
 
 ## Extra protection
 
-- **Fresh 2FA for sensitive actions.** Users, server profiles, API keys, strong game actions, bans,
-  kick-all and "restart now" need a 2FA code from the last 10 minutes; the panel asks for it.
+- **Fresh 2FA for sensitive actions when enabled.** Users, server profiles, API keys, strong game actions, bans,
+  kick-all and "restart now" need a 2FA code from the last 10 minutes if the account has 2FA on;
+  the panel asks for it. With 2FA off, the signed-in session and role permissions still apply.
 - **Throttling.** Five failed sign-ins lock the account for 30 seconds, doubling up to an hour;
   20 failures from one address in 15 minutes block that address. A code can be used only once.
 - **Sessions** last 12 hours (2 hours idle). **Account** lists them and can sign out the others.

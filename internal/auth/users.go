@@ -25,6 +25,7 @@ func (a *Auth) RegisterAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/account/recovery-codes", a.newRecoveryCodes)
 	mux.HandleFunc("POST /api/account/2fa/start", a.reenrollStart)
 	mux.HandleFunc("POST /api/account/2fa/finish", a.reenrollFinish)
+	mux.HandleFunc("DELETE /api/account/2fa", a.disableTOTP)
 	mux.HandleFunc("DELETE /api/account/sessions/{id}", a.endSession)
 	mux.HandleFunc("POST /api/account/sessions/sign-out-all", a.endOtherSessions)
 	mux.HandleFunc("DELETE /api/account/steam", a.unlink("steam64", "steam"))
@@ -153,6 +154,10 @@ func (a *Auth) confirm(w http.ResponseWriter, r *http.Request) {
 
 func (a *Auth) newRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	u := FromContext(r.Context())
+	if !u.TOTP {
+		httpx.Error(w, 400, "Turn on 2FA first.")
+		return
+	}
 	codes := NewRecoveryCodes(10)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -201,13 +206,43 @@ func (a *Auth) reenrollFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, 400, "That code is not right. Check the time on your phone and try the next code.")
 		return
 	}
-	codes, err := a.saveTOTP(r.Context(), u.ID, sec, step)
+	codes, err := a.saveTOTP(r.Context(), u.ID, sec, step, u.sessionHash)
 	if err != nil {
 		httpx.Error(w, 500, "could not save 2FA")
 		return
 	}
-	_ = a.audit.Write(r.Context(), u.Actor(), "auth.2fa_setup", "", map[string]any{"replaced": true}, "ok", "")
+	_ = a.audit.Write(r.Context(), u.Actor(), "auth.2fa_setup", "", map[string]any{"replaced": u.TOTP}, "ok", "")
 	httpx.JSON(w, 200, map[string]any{"recovery_codes": codes})
+}
+
+func (a *Auth) disableTOTP(w http.ResponseWriter, r *http.Request) {
+	u := FromContext(r.Context())
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.Error(w, 500, "could not turn off 2FA")
+		return
+	}
+	defer tx.Rollback()
+	for _, change := range []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE users SET totp_secret='', totp_last_step=0 WHERE id=?`, []any{u.ID}},
+		{`DELETE FROM recovery_codes WHERE user_id=?`, []any{u.ID}},
+		{`DELETE FROM sessions WHERE user_id=? AND id_hash<>?`, []any{u.ID, u.sessionHash}},
+		{`UPDATE sessions SET mfa_at=0 WHERE user_id=? AND id_hash=?`, []any{u.ID, u.sessionHash}},
+	} {
+		if _, err := tx.ExecContext(r.Context(), change.query, change.args...); err != nil {
+			httpx.Error(w, 500, "could not turn off 2FA")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.Error(w, 500, "could not turn off 2FA")
+		return
+	}
+	_ = a.audit.Write(r.Context(), u.Actor(), "account.2fa_disabled", "", nil, "ok", "")
+	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
 
 func (a *Auth) endSession(w http.ResponseWriter, r *http.Request) {

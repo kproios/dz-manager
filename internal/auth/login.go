@@ -51,17 +51,22 @@ func (a *Auth) getPending(r *http.Request) (pending, bool) {
 	return p, true
 }
 
-// afterFirstFactor continues a sign-in whose first factor just passed: the
-// user enters their 2FA code, or sets 2FA up when they have none yet.
-func (a *Auth) afterFirstFactor(ctx context.Context, w http.ResponseWriter, uid int64, method, ret string) string {
+// afterFirstFactor asks for a code only when the account has enabled 2FA.
+func (a *Auth) afterFirstFactor(ctx context.Context, w http.ResponseWriter, r *http.Request, uid int64, method, ret string) string {
 	var enc string
-	_ = a.db.QueryRowContext(ctx, `SELECT totp_secret FROM users WHERE id=?`, uid).Scan(&enc)
-	p := pending{UID: uid, Method: method, Kind: "totp", Return: safeReturn(ret)}
-	if enc == "" {
-		// The key is fixed here, once: however often the setup page asks
-		// (reloads, two tabs, parallel requests) it always gets this one.
-		p.Kind, p.Secret = "enroll", NewTOTPSecret()
+	if err := a.db.QueryRowContext(ctx, `SELECT totp_secret FROM users WHERE id=? AND disabled_at IS NULL`, uid).Scan(&enc); err != nil {
+		httpx.Error(w, 500, "could not read account")
+		return ""
 	}
+	if enc == "" {
+		if err := a.createSession(ctx, w, r, uid, method, false); err != nil {
+			httpx.Error(w, 500, "could not create session")
+			return ""
+		}
+		_ = a.audit.Write(ctx, a.userActor(ctx, uid), "auth.login", "", map[string]any{"method": method, "second_factor": "not enabled", "ip": ClientIP(r)}, "ok", "")
+		return "signed_in"
+	}
+	p := pending{UID: uid, Method: method, Kind: "totp", Return: safeReturn(ret)}
 	a.setPending(w, p)
 	return p.Kind
 }
@@ -73,6 +78,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/totp", a.post(a.totpStep))
 	mux.HandleFunc("POST /auth/enroll/start", a.post(a.enrollStart))
 	mux.HandleFunc("POST /auth/enroll/finish", a.post(a.enrollFinish))
+	mux.HandleFunc("POST /auth/enroll/skip", a.post(a.enrollSkip))
 	mux.HandleFunc("POST /auth/cancel", a.post(func(w http.ResponseWriter, r *http.Request) {
 		a.setCookie(w, a.pendingCookieName(), "", "/", 0)
 		writeJSON(w, 200, map[string]bool{"ok": true})
@@ -175,7 +181,9 @@ func (a *Auth) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Wrong user name or password."})
 		return
 	}
-	writeJSON(w, 200, map[string]string{"next": a.afterFirstFactor(ctx, w, uid, "password", in.Return)})
+	if next := a.afterFirstFactor(ctx, w, r, uid, "password", in.Return); next != "" {
+		writeJSON(w, 200, map[string]string{"next": next})
+	}
 }
 
 // checkSecondFactor verifies a TOTP code (refusing reuse) or a recovery code.
@@ -246,7 +254,7 @@ func (a *Auth) totpStep(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "That code is not right (or was already used)."})
 		return
 	}
-	if err := a.createSession(ctx, w, r, p.UID, p.Method); err != nil {
+	if err := a.createSession(ctx, w, r, p.UID, p.Method, true); err != nil {
 		httpx.Error(w, 500, "could not create session")
 		return
 	}
@@ -280,20 +288,52 @@ func (a *Auth) enrollStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // saveTOTP stores a verified secret and returns fresh recovery codes.
-func (a *Auth) saveTOTP(ctx context.Context, uid int64, sec string, step int64) ([]string, error) {
+func (a *Auth) saveTOTP(ctx context.Context, uid int64, sec string, step int64, sessionHash string) ([]string, error) {
 	codes := NewRecoveryCodes(10)
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret=?, totp_last_step=? WHERE id=?`, a.box.SealString(sec, fmt.Sprintf("totp:%d", uid)), step, uid); err != nil {
+	query := `UPDATE users SET totp_secret=?, totp_last_step=? WHERE id=? AND disabled_at IS NULL`
+	if sessionHash == "" {
+		query += ` AND totp_secret=''`
+	}
+	res, err := tx.ExecContext(ctx, query, a.box.SealString(sec, fmt.Sprintf("totp:%d", uid)), step, uid)
+	if err != nil {
 		return nil, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return nil, errors.New("account is unavailable or 2FA is already enabled")
 	}
 	if err := a.replaceRecovery(ctx, tx, uid, codes); err != nil {
 		return nil, err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND id_hash<>?`, uid, sessionHash); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET mfa_at=? WHERE user_id=? AND id_hash=?`, a.now().Unix(), uid, sessionHash); err != nil {
+		return nil, err
+	}
 	return codes, tx.Commit()
+}
+
+// enrollSkip lets a pending enrollment from an older release continue without
+// enabling 2FA. A pending code challenge can never take this path.
+func (a *Auth) enrollSkip(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.getPending(r)
+	if !ok || p.Kind != "enroll" {
+		httpx.Error(w, 401, "Your sign-in expired. Start again.")
+		return
+	}
+	var enabled bool
+	if err := a.db.QueryRowContext(r.Context(), `SELECT totp_secret<>'' FROM users WHERE id=? AND disabled_at IS NULL`, p.UID).Scan(&enabled); err != nil || enabled {
+		httpx.Error(w, 401, "Sign in again to continue.")
+		return
+	}
+	if next := a.afterFirstFactor(r.Context(), w, r, p.UID, p.Method, p.Return); next != "" {
+		writeJSON(w, 200, map[string]string{"next": next})
+	}
 }
 
 func (a *Auth) replaceRecovery(ctx context.Context, tx *sql.Tx, uid int64, codes []string) error {
@@ -331,12 +371,12 @@ func (a *Auth) enrollFinish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "That code is not right. Check the time on your phone and try the next code."})
 		return
 	}
-	codes, err := a.saveTOTP(ctx, p.UID, p.Secret, step)
+	codes, err := a.saveTOTP(ctx, p.UID, p.Secret, step, "")
 	if err != nil {
 		httpx.Error(w, 500, "could not save 2FA")
 		return
 	}
-	if err := a.createSession(ctx, w, r, p.UID, p.Method); err != nil {
+	if err := a.createSession(ctx, w, r, p.UID, p.Method, true); err != nil {
 		httpx.Error(w, 500, "could not create session")
 		return
 	}
@@ -481,5 +521,7 @@ func (a *Auth) invitePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, 200, map[string]string{"next": a.afterFirstFactor(r.Context(), w, uid, "password", "/")})
+	if next := a.afterFirstFactor(r.Context(), w, r, uid, "password", "/"); next != "" {
+		writeJSON(w, 200, map[string]string{"next": next})
+	}
 }

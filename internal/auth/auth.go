@@ -1,6 +1,6 @@
 // Package auth owns DZ Manager's accounts: built-in sign-in (password +
-// TOTP), Steam sign-in and an optional OpenID Connect provider, all followed
-// by a mandatory second factor; server-side sessions; CSRF/Origin checks;
+// optional TOTP), Steam sign-in and an optional OpenID Connect provider;
+// server-side sessions; CSRF/Origin checks;
 // role-based permissions on every panel API route; invites and user
 // management. Roles live in DZ Manager, never in an identity provider.
 package auth
@@ -47,6 +47,7 @@ type User struct {
 	Role        perm.Role         `json:"role"`
 	Permissions []perm.Permission `json:"permissions"`
 	Method      string            `json:"method"`
+	TOTP        bool              `json:"totp"`
 	// StepUpUntil is when the last 2FA confirmation stops unlocking sensitive routes.
 	StepUpUntil time.Time `json:"step_up_until"`
 
@@ -185,19 +186,22 @@ func (a *Auth) setCookie(w http.ResponseWriter, name, value, path string, ttl ti
 // errNoSession is returned when no valid session exists.
 var errNoSession = errors.New("no session")
 
-const sessionUserCols = `u.id,u.sub,u.username,u.email,u.role,s.csrf,s.method,s.mfa_at,s.last_seen_at,s.expires_at`
+const sessionUserCols = `u.id,u.sub,u.username,u.email,u.role,s.csrf,s.method,s.mfa_at,s.last_seen_at,s.expires_at,u.totp_secret<>''`
 
-// createSession signs the user in. Every sign-in has just passed 2FA, so the
-// session starts with a fresh confirmation.
-func (a *Auth) createSession(ctx context.Context, w http.ResponseWriter, r *http.Request, uid int64, method string) error {
+// createSession records whether this sign-in passed an enabled second factor.
+func (a *Auth) createSession(ctx context.Context, w http.ResponseWriter, r *http.Request, uid int64, method string, secondFactor bool) error {
 	token := secret.Token(32)
 	now := a.now().Unix()
+	mfaAt := int64(0)
+	if secondFactor {
+		mfaAt = now
+	}
 	ua := r.UserAgent()
 	if len(ua) > 200 {
 		ua = ua[:200]
 	}
 	if _, err := a.db.ExecContext(ctx, `INSERT INTO sessions(id_hash,user_id,csrf,id_token,created_at,last_seen_at,expires_at,method,mfa_at,ip,user_agent) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		a.box.Hash(token), uid, secret.Token(24), "", now, now, now+int64(absoluteTTL.Seconds()), method, now, ClientIP(r), ua); err != nil {
+		a.box.Hash(token), uid, secret.Token(24), "", now, now, now+int64(absoluteTTL.Seconds()), method, mfaAt, ClientIP(r), ua); err != nil {
 		return err
 	}
 	_, _ = a.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ? OR last_seen_at < ?`, now, now-int64(idleTTL.Seconds()))
@@ -220,7 +224,7 @@ func (a *Auth) Session(r *http.Request) (*User, error) {
 	var role string
 	var lastSeen, expires int64
 	err = a.db.QueryRowContext(r.Context(), `SELECT `+sessionUserCols+` FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=? AND u.disabled_at IS NULL`, h).
-		Scan(&u.ID, &u.Sub, &u.Username, &u.Email, &role, &u.CSRF, &u.Method, &u.mfaAt, &lastSeen, &expires)
+		Scan(&u.ID, &u.Sub, &u.Username, &u.Email, &role, &u.CSRF, &u.Method, &u.mfaAt, &lastSeen, &expires, &u.TOTP)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNoSession
 	}
@@ -290,7 +294,7 @@ func (a *Auth) RequireAPI(next http.Handler) http.Handler {
 
 // Authorize checks the signed-in user's role against the permission of the
 // mux route the request matches. Routes without a rule are refused for
-// everyone. Sensitive routes also need a 2FA confirmation from the last
+// everyone. Accounts with 2FA enabled must confirm sensitive routes within
 // StepUpTTL; the response then carries "step_up": true so the UI can ask.
 func (a *Auth) Authorize(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +309,7 @@ func (a *Auth) Authorize(mux *http.ServeMux) http.Handler {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "your role (" + string(u.Role) + ") does not allow this", "permission": p})
 			return
 		}
-		if stepUp && a.now().Unix()-u.mfaAt > int64(StepUpTTL.Seconds()) {
+		if stepUp && u.TOTP && a.now().Unix()-u.mfaAt > int64(StepUpTTL.Seconds()) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "confirm with your 2FA code to continue", "step_up": true})
 			return
 		}

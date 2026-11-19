@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -190,6 +191,13 @@ func TestOIDCSignInNeedsALinkedAccount(t *testing.T) {
 	if e.JSON("GET", "/api/me", nil, &me); me.Method != "oidc" || me.Username != "owner" {
 		t.Fatalf("me = %+v", me)
 	}
+	e.App.DB.Exec(`UPDATE users SET totp_secret='' WHERE id=?`, uid)
+	c = noFollow()
+	finalHash(c, "/auth/oidc/login")
+	e.Client = c
+	if code := e.JSON("GET", "/api/me", nil, &me); code != 200 || me.Method != "oidc" || me.TOTP {
+		t.Fatalf("OIDC without 2FA = %d", code)
+	}
 	// Tampered tokens never get as far as 2FA.
 	for name, tamper := range map[string]func(){
 		"wrong audience": func() { e.Issuer.WrongAudience = true },
@@ -255,9 +263,119 @@ func TestSteamSignIn(t *testing.T) {
 	if _, h := signIn("76561198000000002"); h != "/login?e=no_account" {
 		t.Fatalf("unknown steam account = %q", h)
 	}
+	e.App.DB.Exec(`UPDATE users SET totp_secret='' WHERE id=?`, uid)
+	c, _ = signIn("76561198000000001")
+	e.Client = c
+	var me auth.User
+	if code := e.JSON("GET", "/api/me", nil, &me); code != 200 || me.Method != "steam" || me.TOTP {
+		t.Fatalf("Steam without 2FA = %d", code)
+	}
 	valid = false
 	if _, h := signIn("76561198000000001"); h != "/login?e=failed" {
 		t.Fatalf("steam said not valid = %q", h)
+	}
+}
+
+func TestOptionalTOTP(t *testing.T) {
+	e := apptest.New(t, "")
+	uid := e.CreateUser("owner", "owner")
+	e.App.DB.Exec(`UPDATE users SET totp_secret='' WHERE id=?`, uid)
+	password := map[string]string{"login": "owner", "password": apptest.Password}
+	var next map[string]string
+	if code := e.JSON("POST", "/auth/password", password, &next); code != 200 || next["next"] != "signed_in" {
+		t.Fatalf("password without 2FA = %d", code)
+	}
+	var me auth.User
+	e.JSON("GET", "/api/me", nil, &me)
+	e.CSRF = me.CSRF
+	if me.TOTP || me.CSRF == "" {
+		t.Fatal("expected authenticated account with 2FA off")
+	}
+	// Sensitive routes remain usable when the account has no second factor.
+	e.App.DB.Exec(`UPDATE sessions SET mfa_at=0`)
+	if code := e.JSON("POST", "/api/profiles", profiles.Input{Name: "optional-2fa"}, nil); code != 201 {
+		t.Fatalf("sensitive route without 2FA = %d", code)
+	}
+	if code := e.JSON("POST", "/api/account/recovery-codes", nil, nil); code != 400 {
+		t.Fatalf("recovery codes without 2FA = %d", code)
+	}
+	other := *e
+	jar, _ := cookiejar.New(nil)
+	other.Client = &http.Client{Jar: jar}
+	other.JSON("POST", "/auth/password", password, nil)
+	var enr map[string]string
+	if code := e.JSON("POST", "/api/account/2fa/start", nil, &enr); code != 200 {
+		t.Fatalf("enable start = %d", code)
+	}
+	var done struct {
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	if code := e.JSON("POST", "/api/account/2fa/finish", map[string]string{"ticket": enr["ticket"], "code": auth.TOTPAt(enr["secret"], time.Now())}, &done); code != 200 || len(done.RecoveryCodes) != 10 {
+		t.Fatalf("enable finish = %d", code)
+	}
+	if code := other.JSON("GET", "/api/me", nil, nil); code != 401 {
+		t.Fatalf("old session survived enabling 2FA: %d", code)
+	}
+	e.JSON("GET", "/api/me", nil, &me)
+	if !me.TOTP {
+		t.Fatal("2FA was not enabled")
+	}
+	resp := e.Do("POST", "/auth/logout", nil)
+	resp.Body.Close()
+	if code := e.JSON("POST", "/auth/password", password, &next); code != 200 || next["next"] != "totp" {
+		t.Fatalf("enabled account skipped 2FA = %d", code)
+	}
+	if code := e.JSON("POST", "/auth/enroll/skip", nil, nil); code != 401 {
+		t.Fatalf("enabled account bypassed 2FA = %d", code)
+	}
+	if code := e.JSON("GET", "/api/me", nil, nil); code != 401 {
+		t.Fatalf("password alone created a session = %d", code)
+	}
+	if code := e.JSON("POST", "/auth/totp", map[string]string{"recovery": done.RecoveryCodes[0]}, nil); code != 200 {
+		t.Fatalf("recovery sign-in = %d", code)
+	}
+	e.JSON("GET", "/api/me", nil, &me)
+	e.CSRF = me.CSRF
+	e.App.DB.Exec(`UPDATE sessions SET mfa_at=0`)
+	if code := e.JSON("DELETE", "/api/account/2fa", nil, nil); code != 403 {
+		t.Fatalf("disabled without fresh confirmation = %d", code)
+	}
+	if code := e.JSON("POST", "/api/account/confirm", map[string]string{"recovery": done.RecoveryCodes[1]}, nil); code != 200 {
+		t.Fatalf("confirm disabling = %d", code)
+	}
+	if code := e.JSON("DELETE", "/api/account/2fa", nil, nil); code != 200 {
+		t.Fatalf("disable = %d", code)
+	}
+	e.JSON("GET", "/api/me", nil, &me)
+	var remaining int
+	e.App.DB.QueryRow(`SELECT COUNT(*) FROM recovery_codes WHERE user_id=?`, uid).Scan(&remaining)
+	if me.TOTP || remaining != 0 {
+		t.Fatal("2FA or recovery codes survived disabling")
+	}
+	if code := e.JSON("POST", "/auth/password", password, &next); code != 200 || next["next"] != "signed_in" {
+		t.Fatalf("sign-in after disabling = %d", code)
+	}
+}
+
+func TestLegacyEnrollmentChoice(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			e := apptest.New(t, "")
+			uid := e.CreateUser("owner", "owner")
+			if !enabled {
+				e.App.DB.Exec(`UPDATE users SET totp_secret='' WHERE id=?`, uid)
+			}
+			p, _ := json.Marshal(map[string]any{"u": uid, "m": "password", "k": "enroll", "s": auth.NewTOTPSecret(), "e": time.Now().Add(time.Minute).Unix()})
+			u, _ := url.Parse(e.TS.URL)
+			e.Client.Jar.SetCookies(u, []*http.Cookie{{Name: "dzm_pending", Value: e.App.Box.SealString(string(p), "pending"), Path: "/"}})
+			want := 200
+			if enabled {
+				want = 401
+			}
+			if code := e.JSON("POST", "/auth/enroll/skip", nil, nil); code != want {
+				t.Fatalf("legacy skip = %d, want %d", code, want)
+			}
+		})
 	}
 }
 
@@ -272,7 +390,7 @@ func TestInviteRolesAndStepUp(t *testing.T) {
 	owner := e.Client
 	ownerCSRF := e.CSRF
 
-	// The invitee: name + password, then sets up 2FA, then is signed in.
+	// The invitee signs in immediately and can then choose to enable 2FA.
 	jar, _ := cookiejar.New(nil)
 	e.Client, e.CSRF = &http.Client{Jar: jar}, ""
 	var info map[string]any
@@ -283,38 +401,36 @@ func TestInviteRolesAndStepUp(t *testing.T) {
 		t.Fatalf("weak password = %d", code)
 	}
 	var next map[string]string
-	if code := e.JSON("POST", "/auth/invite/"+token+"/password", map[string]string{"username": "Steve", "password": "a long enough password"}, &next); code != 200 || next["next"] != "enroll" {
+	if code := e.JSON("POST", "/auth/invite/"+token+"/password", map[string]string{"username": "Steve", "password": "a long enough password"}, &next); code != 200 || next["next"] != "signed_in" {
 		t.Fatalf("accept = %d %v", code, next)
 	}
-	// Two setup requests can leave with the same pending cookie before either
-	// response arrives. Snapshot it to reproduce that race deterministically.
-	setupURL, _ := url.Parse(e.TS.URL)
-	otherJar, _ := cookiejar.New(nil)
-	otherJar.SetCookies(setupURL, e.Client.Jar.Cookies(setupURL))
-	otherTab := *e
-	otherTab.Client = &http.Client{Jar: otherJar}
+	var me auth.User
+	if code := e.JSON("GET", "/api/me", nil, &me); code != 200 || me.TOTP {
+		t.Fatalf("sign-in without 2FA = %d", code)
+	}
+	e.CSRF = me.CSRF
+	if code := e.JSON("GET", "/api/users", nil, nil); code != 403 {
+		t.Fatalf("moderator without 2FA escaped role permissions: %d", code)
+	}
 	var enr map[string]string
-	if code := e.JSON("POST", "/auth/enroll/start", nil, &enr); code != 200 || !strings.HasPrefix(enr["qr"], "data:image/png;base64,") || !strings.HasPrefix(enr["uri"], "otpauth://totp/") {
+	if code := e.JSON("POST", "/api/account/2fa/start", nil, &enr); code != 200 || !strings.HasPrefix(enr["qr"], "data:image/png;base64,") || !strings.HasPrefix(enr["uri"], "otpauth://totp/") {
 		t.Fatalf("enroll start = %d", code)
 	}
-	// The QR code, copyable key and setup link must agree across both requests.
+	// Each setup response carries its own ticket. Another request must not
+	// invalidate the key the user already sees.
 	var again map[string]string
-	if code := otherTab.JSON("POST", "/auth/enroll/start", nil, &again); code != 200 || again["secret"] != enr["secret"] || again["uri"] != enr["uri"] || again["qr"] != enr["qr"] {
-		t.Fatal("overlapping setup requests returned different enrollment data")
-	}
-	if code := e.JSON("POST", "/auth/enroll/start", nil, &again); code != 200 || again["secret"] != enr["secret"] {
-		t.Fatal("the setup key changed on reload")
+	if code := e.JSON("POST", "/api/account/2fa/start", nil, &again); code != 200 || again["ticket"] == "" {
+		t.Fatalf("another setup request = %d", code)
 	}
 	var done struct {
 		RecoveryCodes []string `json:"recovery_codes"`
 	}
-	if code := e.JSON("POST", "/auth/enroll/finish", map[string]string{"code": auth.TOTPAt(enr["secret"], time.Now())}, &done); code != 200 || len(done.RecoveryCodes) != 10 {
+	if code := e.JSON("POST", "/api/account/2fa/finish", map[string]string{"code": auth.TOTPAt(enr["secret"], time.Now()), "ticket": enr["ticket"]}, &done); code != 200 || len(done.RecoveryCodes) != 10 {
 		t.Fatalf("enroll finish = %d %+v", code, done)
 	}
-	var me auth.User
 	e.JSON("GET", "/api/me", nil, &me)
 	e.CSRF = me.CSRF
-	if me.Role != "moderator" || me.Username != "Steve" {
+	if me.Role != "moderator" || me.Username != "Steve" || !me.TOTP {
 		t.Fatalf("invitee = %+v", me)
 	}
 	// The invite works once.

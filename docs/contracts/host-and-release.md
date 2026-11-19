@@ -62,9 +62,9 @@ moving the game server to another provider does not need host access.
 | `GET /health` | none | 200 as soon as the process serves HTTP. Liveness only. |
 | `GET /ready` | none | 200 + `{"status":"ready","version":"vX.Y.Z"}` once the DB is open and migrated. 503 otherwise. The updater checks that `version` equals the tag it installed. |
 | `/ingest/…` | per-server credentials (Basic or token) | Game → DZ Manager telemetry and command polling. It is the **only** path published on the ingest hostname. |
-| `/auth/…` | none | Sign-in: password, Steam OpenID, optional OIDC (authorization code + PKCE, callback `/auth/callback`), each followed by TOTP 2FA; invites; logout. See [accounts](../accounts.md). |
+| `/auth/…` | none | Sign-in: password, Steam OpenID, optional OIDC (authorization code + PKCE, callback `/auth/callback`), followed by TOTP if enabled for the account; invites; logout. See [accounts](../accounts.md). |
 | `/` and `/assets/…` | none | The UI shell; it holds no data and shows the sign-in page until signed in. |
-| `/api/…`, `/tiles/…` | session created **only** after both sign-in factors | API and SSE. Each `/api` route also needs its role permission (`internal/perm`). |
+| `/api/…`, `/tiles/…` | authenticated session, including TOTP when enabled | API and SSE. Each `/api` route also needs its role permission (`internal/perm`). |
 
 `/health` and `/ready` expose no secrets and no game data.
 

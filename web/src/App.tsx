@@ -103,6 +103,10 @@ export default function App() {
                 <a key={k} href={'#/' + k} className={route === k || (k === 'live' && route === 'map') ? 'active' : ''} aria-current={route === k ? 'page' : undefined}><Icon name={icon} />{label}</a>
               ))}
             </nav>
+            <div className="mobile-account">
+              <a href="#/account" className={route === 'account' ? 'active' : ''} aria-current={route === 'account' ? 'page' : undefined}>Account</a>
+              <form method="post" action="/auth/logout"><button className="link">Sign out</button></form>
+            </div>
             <div className="me">
               <a className={'who' + (route === 'account' ? ' active' : '')} href="#/account" title="Your account, 2FA and sessions">{me.username}</a>
               <div className="small muted">{roleLabels[me.role]} · {methodLabels[me.method] || me.method}</div>

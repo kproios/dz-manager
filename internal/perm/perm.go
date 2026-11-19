@@ -171,6 +171,7 @@ var Routes = map[string]Rule{
 	"POST /api/account/recovery-codes":        {Perm: Self, StepUp: true},
 	"POST /api/account/2fa/start":             {Perm: Self, StepUp: true},
 	"POST /api/account/2fa/finish":            {Perm: Self, StepUp: true},
+	"DELETE /api/account/2fa":                 {Perm: Self, StepUp: true},
 	"DELETE /api/account/sessions/{id}":       {Perm: Self},
 	"POST /api/account/sessions/sign-out-all": {Perm: Self},
 	"DELETE /api/account/steam":               {Perm: Self, StepUp: true},

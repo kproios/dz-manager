@@ -2,7 +2,7 @@
 
 Admin console for a DayZ PC server: live map, players, bans, priority queue, restarts, Discord
 feeds, a public API and an MCP server for MCP clients. One static Go binary with an embedded
-React UI and SQLite. Its own accounts with roles, invites and mandatory 2FA (password or Steam
+React UI and SQLite. Its own accounts with roles, invites and optional 2FA (password or Steam
 sign-in, optional single sign-on). Works on any map, official or Workshop.
 
 - Architecture: [ADR 0001](docs/adr/0001-architecture.md)
