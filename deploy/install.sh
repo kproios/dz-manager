@@ -12,7 +12,7 @@ while (($#)); do
         *) echo 'Usage: install.sh --domain example.org [--ssh-address LAN_IP]' >&2; exit 1;;
     esac
 done
-[[ $domain =~ ^[a-z0-9.-]+$ && $domain == *.* ]] || exit 1
+[[ $domain =~ ^[a-z0-9.-]+$ && $domain == *.* ]] || { echo 'Supply --domain with your own domain (for example example.com)' >&2; exit 1; }
 [[ -z $ssh_address || $ssh_address =~ ^192\.168\.[0-9]{1,3}\.[0-9]{1,3}$ || $ssh_address =~ ^10\.[0-9.]+$ ]] || exit 1
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 source /etc/os-release
