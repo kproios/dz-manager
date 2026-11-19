@@ -11,7 +11,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - dzm-data:/data
-    # Tiling a large map image needs about 500 MB for a moment.
+    # Tiling a 7616 px map image needs about 270 MB for a few seconds.
     mem_limit: 1g
     read_only: true
     tmpfs:
