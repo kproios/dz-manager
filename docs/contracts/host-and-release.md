@@ -15,7 +15,7 @@ the app works, and the app does not need to know how the host was built.
 | Deployable release | A **published, non-draft, non-prerelease** GitHub Release for that tag. Pre-releases (`v1.2.3-rc.1`) are never auto-installed. |
 | Assets | `dzm_linux_amd64.tar.gz`, `dzm_linux_arm64.tar.gz`, `SHA256SUMS` (exact names, no version in the file name). The updater ignores any other assets. |
 | Game-side asset | `DZMBridge.zip`: the server-side mod folder `@DZMBridge/` (`addons/DZMBridge.pbo`, `mod.cpp`), built by CI. **Unsigned** (server-side mods loaded with `-servermod` need no `.bisign`). The owner installs it on the game server by hand. The host updater never touches it. |
-| Tarball layout | `dzm` (static binary, CGO disabled), `VERSION` (single line, equals the tag, e.g. `v0.3.1`), `LICENSES/` (third-party notices). Nothing else is required. |
+| Tarball layout | `dzm` (static binary, CGO disabled), `VERSION` (single line, equals the release tag), `LICENSES/` (third-party notices). Nothing else is required. |
 | `SHA256SUMS` | `sha256sum` format, one line per asset (tarballs and `DZMBridge.zip`). |
 
 No signing key. Integrity comes from HTTPS + an authenticated download from a private repo +
@@ -86,13 +86,13 @@ moving the game server to another provider does not need host access.
 
 ```json
 {
-  "checked_at": "2026-11-04T10:00:00Z",
-  "installed": "v0.3.1",
-  "latest_seen": "v0.3.2",
+  "checked_at": "2030-01-01T10:00:00Z",
+  "installed": "v1.0.0",
+  "latest_seen": "v1.0.1",
   "last_result": "ok | rolled_back | download_failed | verify_failed | skipped_hold | skipped_blocked",
   "last_error": "",
-  "blocked_versions": ["v0.3.2"],
-  "token_expires_at": "2027-11-01T00:00:00Z"
+  "blocked_versions": ["v1.0.1"],
+  "token_expires_at": "2031-01-01T00:00:00Z"
 }
 ```
 
