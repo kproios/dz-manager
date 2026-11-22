@@ -8,7 +8,9 @@ of this goes into the normal `-mod=` list.
 @DZMBridge is a small server-side mod with no dependencies. It sends live positions, events and
 performance to DZ Manager and carries out the actions you click in the panel.
 
-1. **Get the mod.** Subscribe to "DZ Manager Bridge" on the Steam Workshop, or download
+1. **Get the mod.** Subscribe to
+   [DZ Manager Bridge on the Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3844024320)
+   (Workshop ID `3844024320`; many game hosts can add Workshop mods by this ID), or download
    `DZMBridge.zip` from the [latest release](../../../releases/latest) and check it against
    `SHA256SUMS` from the same release.
 2. **Upload it.** Put the `@DZMBridge` folder next to the server executable, with your host's

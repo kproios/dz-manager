@@ -31,7 +31,9 @@ cloud VM.
 - **DZ Manager** is the panel. You install it once, on any always-on machine.
 - **@DZMBridge** is a small server-side mod for the game server. Players never download it. It
   sends live positions, events and performance to DZ Manager and carries out actions such as
-  teleport or vehicle repair.
+  teleport or vehicle repair. Get it from the
+  [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3844024320) or the
+  latest release.
 - **RCON and the server query** are built into every DayZ server. DZ Manager uses them for status,
   the player list, messages, kicks, bans and restarts, even before the mod is installed.
 
