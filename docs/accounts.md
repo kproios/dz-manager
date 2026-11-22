@@ -6,10 +6,15 @@ invites live in DZ Manager, under **Users**.
 
 ## First owner
 
-On a new install there are no accounts. On the server, run (same environment as the service):
+On a new install there are no accounts. On the machine running DZ Manager:
 
 ```bash
-dzm admin invite-owner                    # Docker: docker exec dzm dzm admin invite-owner
+# Docker (in the deploy/docker folder)
+docker compose exec dzm dzm admin invite-owner
+
+# Linux install (as root)
+systemd-run --pipe --wait -p User=dzm -p EnvironmentFile=/etc/dzm/dzm.env \
+  /opt/dzm/current/dzm admin invite-owner
 ```
 
 It prints a one-time link, valid for a day. Open it, pick your name and a password (or Steam), and

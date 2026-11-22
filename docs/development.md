@@ -1,6 +1,7 @@
 # Development
 
 Requirements: Go (the toolchain in `go.mod` downloads automatically), Node 22, Python 3 (PBO packer).
+On Windows, use WSL or Git Bash for the shell commands below.
 
 ```bash
 npm ci --prefix web && npm --prefix web test && npm --prefix web run build   # UI → internal/web/dist
@@ -22,13 +23,14 @@ only, never in a release); add the `DZM_OIDC_*` values it prints, then link it u
 ## Layout
 | Path | What |
 |---|---|
-| `cmd/dzm` | the binary (serve, version, check-config, admin invite-owner) |
+| `cmd/dzm` | the binary (serve, version, check-config, health, map, admin invite-owner) |
 | `internal/auth` | accounts: password/Steam/OIDC sign-in, TOTP 2FA, invites, sessions, CSRF |
 | `internal/perm` | roles and the permission of every API route (deny by default) |
 | `internal/profiles` | server profiles + connect wizard |
 | `internal/rcon` | RCON + A2S connector |
-| `internal/metricz` | MetricZ receiver, live map state, perf |
-| `internal/restarts` | restart observation |
+| `internal/metricz` | live map state, performance history (from @DZMBridge, or the optional MetricZ receiver) |
+| `internal/restarts` | restart schedule, countdowns and restart detection |
+| `internal/publicapi`, `internal/mcp` | public API and MCP server with scoped keys |
 | `internal/bridge` | ingest v1 + command queue |
 | `internal/players` | identities, sessions, combat |
 | `internal/actions` | mod-backed player actions |
@@ -36,3 +38,4 @@ only, never in a release); add the `DZM_OIDC_*` values it prints, then link it u
 | `internal/bans` | bans + external lists |
 | `web/` | React UI |
 | `mod/DZMBridge` | server-side PBO sources |
+| `deploy/` | Linux installer, updater, backup and systemd units, Docker Compose |

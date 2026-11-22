@@ -15,7 +15,7 @@ const blank = { name: '', provider_kind: 'selfhosted', game_host: '', game_port:
 type Edit = typeof blank & { id?: string }
 const PROVIDERS: [string, string, string][] = [
   ['selfhosted', 'Self-hosted', 'Your own machine or VM, started by your own scripts or panel.'],
-  ['managed', 'Managed host panel', 'No SSH or files: everything goes through RCON and the bridge.'],
+  ['managed', 'Managed host panel', 'A rented server without SSH: everything goes through RCON and the bridge.'],
   ['generic', 'Other host', 'Any other provider with RCON access.'],
 ]
 const providerName = (k: string) => PROVIDERS.find((p) => p[0] === k)?.[1] || k

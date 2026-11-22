@@ -14,11 +14,11 @@ the app works, and the app does not need to know how the host was built.
 | Trigger | Push of a git tag `vMAJOR.MINOR.PATCH` (semver, no suffix) on `main`. |
 | Deployable release | A **published, non-draft, non-prerelease** GitHub Release for that tag. Pre-releases (`v1.2.3-rc.1`) are never auto-installed. |
 | Assets | `dzm_linux_amd64.tar.gz`, `dzm_linux_arm64.tar.gz`, `SHA256SUMS` (exact names, no version in the file name). The updater ignores any other assets. |
-| Game-side asset | `DZMBridge.zip`: the server-side mod folder `@DZMBridge/` (`addons/DZMBridge.pbo`, `mod.cpp`), built by CI. **Unsigned** (server-side mods loaded with `-servermod` need no `.bisign`). The owner installs it on the game server by hand. The host updater never touches it. |
+| Game-side asset | `DZMBridge.zip`: the server-side mod folder `@DZMBridge/` (`addons/DZMBridge.pbo`, `mod.cpp`), built by CI. **Unsigned** (server-side mods loaded with `-servermod` need no `.bisign`). The operator installs it on the game server by hand. The host updater never touches it. |
 | Tarball layout | `dzm` (static binary, CGO disabled), `VERSION` (single line, equals the release tag), `LICENSES/` (third-party notices). Nothing else is required. |
 | `SHA256SUMS` | `sha256sum` format, one line per asset (tarballs and `DZMBridge.zip`). |
 
-No signing key. Integrity comes from HTTPS + an authenticated download from a private repo +
+No signing key. Integrity comes from HTTPS + an authenticated download through the GitHub API +
 `SHA256SUMS`. A signing key would live in the same GitHub account, so it would add work without
 adding protection.
 
@@ -37,7 +37,7 @@ adding protection.
 |---|---|---|---|
 | `DZM_LISTEN` | no | `127.0.0.1:8080` | Listener. Must stay on loopback (except in the Docker image). Ingress is only through a tunnel or reverse proxy. |
 | `DZM_DATA_DIR` | no | `/var/lib/dzm` | SQLite DB, tiles, backups, updater status. |
-| `DZM_SECRET_KEY` | **yes** | – | 32-byte base64 key that encrypts stored game-server secrets (RCON password, ingest tokens) at rest. Missing or invalid key: refuse to start. **The owner keeps a copy in their password manager, because a DB backup is useless without it.** |
+| `DZM_SECRET_KEY` | **yes** | – | 32-byte base64 key that encrypts stored game-server secrets (RCON password, ingest tokens) at rest. Missing or invalid key: refuse to start. **Keep a copy in a password manager: a DB backup is useless without it.** |
 | `DZM_PUBLIC_URL` | yes | – | `https://dzm.example.com`. Used for sign-in redirects (Steam, OIDC `<url>/auth/callback`), invite links, cookie scope and CSRF origin checks. |
 | `DZM_INGEST_PUBLIC_URL` | yes | – | `https://dzm-ingest.example.com` (shown to the operator when configuring the game-side mods). |
 | `DZM_OIDC_ISSUER` | no | – | Optional single sign-on: OpenID Connect issuer URL, e.g. `https://<sso-host>/application/o/dz-manager/`. Set all three `DZM_OIDC_*` values or none. |
@@ -45,7 +45,7 @@ adding protection.
 | `DZM_OIDC_CLIENT_SECRET` | no | – | OIDC confidential-client secret. |
 | `DZM_OIDC_LABEL` | no | `Single sign-on` | Text of the sign-in button for the OIDC provider. |
 | `DZM_STEAM_LOGIN` | no | `1` | `0` hides "Sign in with Steam". |
-| `DZM_TZ` | no | `Europe/Helsinki` | Display and schedule timezone. Everything is stored in UTC. |
+| `DZM_TZ` | no | `UTC` | Display timezone. Everything is stored in UTC; restart schedules carry their own timezone. |
 | `DZM_LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. JSON logs go to stdout (journald). |
 | `DZM_ALERT_WEBHOOK` | no | – | Optional ntfy/Discord-compatible URL for operational alerts. |
 | `DZM_MAP_MAX_PX` | no | `10000` | Largest map image (pixels per side) the server will tile. Tiling needs about 4 bytes per pixel of memory (7616 px ≈ 270 MB peak, so it fits the unit's `MemoryMax=512M`). 1024–20000. |

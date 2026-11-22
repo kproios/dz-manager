@@ -310,7 +310,7 @@ func (rc *Receiver) State(ctx context.Context) MapState {
 		return MapState{Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no active server profile"}
 	}
 	snap, ok, fresh := rc.Latest(p.ID)
-	st := MapState{ServerID: p.ID, Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no position data received yet: install @DZMBridge and MetricZ with the generated config (Settings → Servers → Connect)"}
+	st := MapState{ServerID: p.ID, Players: []Player{}, Vehicles: []Vehicle{}, Reason: "no position data received yet: install @DZMBridge with the generated config (Settings → Server → Connect…)"}
 	if ok {
 		st = MapState{ServerID: p.ID, Available: true, Fresh: fresh, ReceivedAt: &snap.ReceivedAt, World: snap.World, Players: snap.Players, Vehicles: snap.Vehicles, Perf: &snap.Perf, Source: "metricz"}
 		if !fresh {

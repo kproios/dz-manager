@@ -14,7 +14,7 @@ if [[ -f "$db" ]]; then
     sqlite3 "$db" ".timeout 30000" ".backup '$tmp'"
     [[ $(sqlite3 "$tmp" 'PRAGMA integrity_check;') == ok ]]
     chown dzm:dzm "$tmp"
-    mv -f -- "$tmp" "$out/daily-$(TZ=Europe/Helsinki date +%Y%m%d).db"
+    mv -f -- "$tmp" "$out/daily-$(date +%Y%m%d).db"
     tmp=
     find "$out" -maxdepth 1 -type f -name 'daily-????????.db' -mtime +13 -delete
     echo 'Daily database snapshot: integrity_check=ok'

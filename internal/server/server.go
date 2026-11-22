@@ -277,7 +277,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(b, &us) == nil {
 			out["updater"] = us
 			if t, err := time.Parse(time.RFC3339, us.TokenExpiresAt); err == nil && time.Until(t) < 30*24*time.Hour {
-				warnings = append(warnings, "GitHub updater token expires "+t.Format("2006-01-02")+": rotate it (guide)")
+				warnings = append(warnings, "GitHub updater token expires "+t.Format("2006-01-02")+": put a new one in /etc/dzm/updater.env")
 			}
 			if us.LastResult == "rolled_back" {
 				warnings = append(warnings, "Last update was rolled back: "+us.LastError)
@@ -285,13 +285,15 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		out["updater"] = nil
-		warnings = append(warnings, "No updater status found (host updater not installed or never ran)")
+		if !s.Cfg.Container { // Docker installs update by rebuilding the image
+			warnings = append(warnings, "No updater status found (host updater not installed or never ran)")
+		}
 	}
 	if p, _, err := s.Profiles.Active(ctx); err == nil {
 		out["active_server"] = map[string]any{"id": p.ID, "name": p.Name, "provider": p.ProviderKind}
 	} else {
 		out["active_server"] = nil
-		warnings = append(warnings, "No game server configured yet (Settings → Servers)")
+		warnings = append(warnings, "No game server configured yet (Settings → Server → Add server)")
 	}
 	out["warnings"] = warnings
 	httpx.JSON(w, 200, out)

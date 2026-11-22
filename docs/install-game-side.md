@@ -1,71 +1,83 @@
-# Installing the game-side pieces
+# Game server setup
 
-Everything on the game server is **server-side only**. Never add these mods to `-mod=`, and
-players never download anything.
+Everything on the game server is **server-side only**. Players never download anything, and none
+of this goes into the normal `-mod=` list.
 
-## 1. @DZMBridge (server-side mod)
-1. Get `@DZMBridge` from the Steam Workshop ("DZ Manager Bridge"), or download `DZMBridge.zip`
-   from the latest release and check it against `SHA256SUMS`.
-2. Put `@DZMBridge/` next to the server executable (your launch folder, or your panel's file
-   manager).
-3. Add it to the **server mods** launch parameter: `-servermod=@DZMBridge` (or your panel's
-   "server-side mods" field). The PBO is unsigned on purpose: server-side mods need no `.bisign`,
-   and no key goes into `keys/`.
-4. Start once. The RPT shows `[DZMBridge] disabled: paste the config …` and
-   `profiles/DZMBridge/config.json` is created.
-5. DZ Manager → Settings → Servers → **Connect…**: copy the bridge JSON over that file
-   (`enabled: true`, `ingest_url`, `server_id`, `server_token`, tracking lists) and restart.
-6. Check: Settings → @DZMBridge shows the installed version and a heartbeat. The `bridge` and
-   `bridge.commands` capabilities turn `ok`, and Settings → Map & tracking shows the map name
-   "reported by the game server".
+## 1. Install @DZMBridge
 
-The bridge has **no dependencies**. When LBmaster mods are loaded it also uses them (LB
-notifications for messages, the LB global banlist for review, LB territory flags as base markers,
-LB code lock raids as raid events); set `"disable_lbmaster": true` in its config to turn that off.
+@DZMBridge is a small server-side mod with no dependencies. It sends live positions, events and
+performance to DZ Manager and carries out the actions you click in the panel.
 
-**Updates are manual:** DZ Manager can auto-update itself, but not the game-side mod. Settings
-shows the installed version, so update the mod when the release notes say it changed. Vehicle
-actions require an up-to-date @DZMBridge.
+1. **Get the mod.** Subscribe to "DZ Manager Bridge" on the Steam Workshop, or download
+   `DZMBridge.zip` from the [latest release](../../../releases/latest) and check it against
+   `SHA256SUMS` from the same release.
+2. **Upload it.** Put the `@DZMBridge` folder next to the server executable, with your host's
+   file manager or by FTP/SFTP.
+3. **Load it as a server-side mod.** Add it to the server mods launch parameter:
+   `-servermod=@DZMBridge` (game hosts usually have a "server-side mods" field for this). It is
+   deliberately unsigned: server-side mods need no `.bisign`, and no key goes into `keys/`.
+4. **Start the server once.** The mod creates `profiles/DZMBridge/config.json` and the server log
+   shows `[DZMBridge] disabled: paste the config …`.
+5. **Paste the configuration.** In DZ Manager open **Settings → Server**, click **Connect…** on
+   your server and copy the bridge configuration over `profiles/DZMBridge/config.json`. It
+   contains the ingest address and this server's own credentials. Treat it like a password.
+6. **Restart the game server.**
 
-**Rollback:** remove `@DZMBridge` from `-servermod` and restart. Nothing else on the server is
-modified by the mod (it only writes `profiles/DZMBridge/config.json`).
+**Check:** **Settings → Server** shows the installed bridge version and a recent heartbeat, the
+dashboard shows the server's FPS and uptime, and **Settings → Map & tracking** says the map was
+reported by the game server. If not, see [Troubleshooting](troubleshooting.md#the-bridge-never-connects).
 
-## 2. MetricZ (optional, upstream, unmodified)
-@DZMBridge already sends live positions and, since its 0.2.2, server performance every minute
-(frame rate, uptime, players, infected, animals, items, vehicles), which DZ Manager prefers. MetricZ
-is only needed with an older @DZMBridge, or when you also export its metrics elsewhere.
-1. Install MetricZ from its upstream source (Steam Workshop id 3594119002 or its release) as a
-   **server-side** mod.
-2. Start once to create `profiles/metricz/config.json`, then merge the MetricZ JSON from
-   **Connect…** (`http.enabled/url/user/password`, `settings.disable_telemetry: true`) and restart.
-3. Check: the `metricz` capability turns `ok`.
+### Working with other mods
+
+The bridge only adds to the game's own classes and works next to other mods. When LBmaster mods
+are loaded it also uses their notifications, global ban list, territory flags and code lock
+raids. To switch that off, set `"disable_lbmaster": true` in its configuration.
+
+### Updating and removing
+
+DZ Manager updates itself; the game-side mod does not. **Settings → Server** shows the installed
+version. When a release says the bridge changed, replace the `@DZMBridge` folder while the server
+is stopped (a running server locks its mod files) and start it again.
+
+To remove it, take `@DZMBridge` out of the server mods and restart. The mod changes nothing else
+on the server; it only writes its own `profiles/DZMBridge/config.json`.
+
+## 2. MetricZ (optional)
+
+The bridge already reports server performance. [MetricZ](https://github.com/WoozyMasta/metricz) is
+only useful if you also export its metrics to other tools, or run an old bridge version. DZ Manager
+accepts its data, and prefers the bridge's when both arrive. To use it: install it as a
+server-side mod from its own release or the Steam Workshop, start once, merge the MetricZ block
+from **Connect…** into `profiles/metricz/config.json`, and restart.
 
 ## 3. Map image (in DZ Manager, once per map)
-Settings → Map & tracking → **Map image**: pick the map and a size, then **Download and install**.
-DZ Manager downloads a terrain image from [tools.dzhosts.com/maps](https://tools.dzhosts.com/maps/)
-(rendered from the game's own terrain textures by
-[dayz-terrain-map](https://github.com/jmhobbs/dayz-terrain-map), MIT), cuts it into map tiles under
-`$DZM_DATA_DIR/tiles/<world>/terrain/` and deletes the download. 7,000–8,000 px is plenty; tiling
-a 7616 px image takes a few seconds and about 270 MB of memory. `DZM_MAP_MAX_PX` (default 10000)
-caps the size.
 
-From the command line (also for maps that are not listed, with a PNG you rendered yourself with
-dayz-terrain-map from your own game files):
+**Settings → Map & tracking → Map image:** pick the map and a size, then **Download and install**.
+DZ Manager downloads a terrain image from [tools.dzhosts.com/maps](https://tools.dzhosts.com/maps/)
+(rendered from the game's own terrain by [dayz-terrain-map](https://github.com/jmhobbs/dayz-terrain-map)),
+cuts it into map tiles and deletes the download. 7,000–8,000 pixels is plenty and takes a few
+seconds.
+
+The map's name, size and place names come from the game server through the bridge, so official
+and Workshop maps both work. Until the bridge has connected you can choose the map by hand in the
+same card. Markers work without an image; it is only the background.
+
+From the command line, also for maps that are not listed (with an image you rendered yourself):
+
 ```bash
 dzm map list
-dzm map install --world chernarusplus                 # best size from dzhosts.com
+dzm map install --world chernarusplus
 dzm map install --world enoch --slug livonia --px 7616
 dzm map install --world namalsk --file namalsk.png
 ```
-Run it as the user that runs `dzm serve` (it writes into `DZM_DATA_DIR`). The map image is never
-committed to git or shipped with releases. Markers work without an image.
 
-The map's name, size and place names come from the game server (@DZMBridge reads `CfgWorlds`), so
-any map works. Until the bridge has connected, set the map by hand in the same card.
+Run these with the same settings as the panel: on Docker prefix them with
+`docker compose exec dzm`, on a Linux install run them through
+`systemd-run --pipe --wait -p User=dzm -p EnvironmentFile=/etc/dzm/dzm.env /opt/dzm/current/dzm …`.
+`DZM_MAP_MAX_PX` limits the largest image (see [Configuration](configuration.md)).
 
-## What is verified vs pending
-| Item | Status |
-|---|---|
-| PBO structure (header, prefix, module paths, SHA1) | verified in CI (`mod/tools/check_pbo.py`) |
-| Enforce Script compiles on DayZ | verified with DayZDiag before each bridge release; there is no DayZ compiler in CI |
-| MetricZ payload parsing | verified against a fixture built from MetricZ docs |
+## Game host requirements
+
+Most game hosts support everything the bridge needs: server-side mods, editing files under
+`profiles/`, and outgoing HTTPS from the game server. See [Game hosts](providers.md) for the
+full list and what to check when moving between hosts.

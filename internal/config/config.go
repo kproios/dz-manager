@@ -118,7 +118,7 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		errs = append(errs, errors.New("DZM_OIDC_LABEL must be at most 40 characters"))
 	}
 
-	tz := get("DZM_TZ", "Europe/Helsinki")
+	tz := get("DZM_TZ", "UTC")
 	if loc, err := time.LoadLocation(tz); err != nil {
 		errs = append(errs, fmt.Errorf("DZM_TZ %q: %w", tz, err))
 	} else {

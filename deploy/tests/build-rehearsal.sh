@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run on a Linux BUILD host with gcc and static libc, never on the dzm LXC.
+# Run on a Linux BUILD host with gcc and static libc, never on the DZ Manager host.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 out=${1:?Usage: build-rehearsal.sh OUTPUT_DIRECTORY}

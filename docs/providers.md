@@ -1,35 +1,53 @@
-# Game-server provider capabilities
+# Game hosts
 
-Moving a server between hosts is a profile change. Verify capabilities on the
-target host before enabling dependent features.
+DZ Manager works with rented game servers and self-hosted ones alike. It only uses what every
+DayZ server offers, plus one server-side mod.
 
-| Channel | Used for | Check |
+## What the game server must allow
+
+| Needed | Used for | How to check |
 |---|---|---|
-| A2S query | Status and player count | The assigned query port is reachable; cached query replies do not prove the game is joinable. |
-| BattlEye RCON | Roster, messages, kick, lock and bans | The assigned port is reachable from the panel host. |
-| Outbound HTTPS via DayZ `RestApi` | Bridge and MetricZ telemetry, command polling | The game can reach the configured ingest URL without an interactive challenge. |
-| Server-side PBO installation | Bridge and MetricZ | The launcher supports `-servermod` and profile JSON configuration. |
-| Host scheduler | Game process lifecycle | Mirror its timezone and schedule in DZ Manager. |
+| Server query (A2S) | Status, map, version, player count | The query port is reachable from the DZ Manager machine. A cached reply from a host's proxy does not prove the server is joinable. |
+| BattlEye RCON | Player list, messages, kicks, lock, bans, restarts | RCON is enabled and its port is reachable from the DZ Manager machine (some hosts need its IP on an allowlist). |
+| Server-side mods (`-servermod`) | Loading @DZMBridge | The host lets you add server-side mods and edit files under `profiles/`. |
+| Outgoing HTTPS from the game server | The bridge sending data and fetching commands | The game server can reach your ingest address with no browser challenge in between. |
+| Automatic start after a shutdown | Restarts sent by DZ Manager | The host's panel or your launcher starts the server again when it stops. |
 
-## Connect a server
+When you add a server, choose the type that fits under **Settings → Server → Add server**:
+self-hosted, a managed host panel without SSH, or another host. It only changes the hints the
+panel shows.
 
-1. Create a server profile with its game, query and RCON endpoints.
-2. Install the server-side mods and paste the configurations from **Connect…**.
-3. Check the `rcon`, `a2s`, `metricz` and `bridge` capability badges.
-4. Mirror the hosting panel's restart schedule and observe a planned restart.
-5. Activate the profile. Archive an old profile to retain history and disable its ingest credentials.
+## Connecting a server
 
-Players and audit history use player identities across server profiles. Reconcile
-local bans with the new server's BattlEye ban list after moving.
+1. **Settings → Server → Add server** with the game, query and RCON addresses and the RCON
+   password.
+2. Install @DZMBridge and paste the configuration from **Connect…**, see
+   [Game server setup](install-game-side.md).
+3. Check the badges on the dashboard: query, RCON and bridge should be green.
+4. Under **Restarts**, copy your host's restart schedule and timezone, then watch the next planned
+   restart appear in the history as completed.
+
+## Moving to another host
+
+Moving is a change of server profile, not a reinstall:
+
+1. Add the new server as another profile and install the bridge there with the new
+   **Connect…** configuration.
+2. When it is ready, **Make active** the new profile. Every page, the map and all actions switch to
+   it.
+3. **Archive** the old profile. Its history is kept and its ingest credentials stop working.
+
+Player history follows players across profiles. Compare DZ Manager's bans with the new server's
+BattlEye ban list after moving.
 
 ## RCON security
 
-BattlEye RCON uses unencrypted UDP. Use a unique password and restrict the RCON
-port to the control-plane host where the provider supports an allowlist.
-Prefer HTTPS-backed bridge actions when available.
+BattlEye RCON is unencrypted UDP. Use a long, unique RCON password, and if your host offers an IP
+allowlist for RCON, allow only the DZ Manager machine. Actions that go through the bridge travel
+over HTTPS instead.
 
 ## Priority queue
 
-The launcher or hosting panel applies queue priority. DZ Manager maintains and
-exports the list through Players → Priority queue or `GET /public/v1/priority`
-with a `priority:read` API key. See [API access](api.md).
+Your host or launcher applies queue priority. DZ Manager keeps the list (**Players → Priority
+queue**) and exports it for your host's tools through `GET /public/v1/priority` with an API key
+that has the `priority:read` scope. See [API and MCP](api.md).

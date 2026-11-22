@@ -1,4 +1,4 @@
-// Command dzm-devoidc runs a fake SSO (OIDC issuer) for local
+// Command dzm-devoidc runs a fake OpenID Connect issuer for local
 // development and smoke tests. It is never part of a release.
 package main
 

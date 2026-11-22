@@ -33,7 +33,7 @@ if ! systemd-detect-virt --container --quiet; then
     # A container shares the hypervisor clock; timesyncd cannot set it (CAP_SYS_TIME).
     systemctl enable --now systemd-timesyncd.service
 else
-    # PVE mounts these itself. Without nesting, duplicate systemd mounts are denied.
+    # The container host mounts these itself. Without nesting, duplicate systemd mounts are denied.
     systemctl mask tmp.mount run-lock.mount dev-mqueue.mount
     systemctl reset-failed tmp.mount run-lock.mount dev-mqueue.mount
 fi
@@ -119,10 +119,10 @@ EOF
     systemctl enable ssh.service
     systemctl reload-or-restart ssh.service || systemctl restart ssh.service
 else
-    # No SSH exposure by default; console access is sufficient for management.
+    # No SSH exposure by default; manage the machine from its console.
     systemctl disable --now ssh.socket ssh.service 2>/dev/null || true
 fi
-# The stock LXC template may include a mail listener; this host does not send mail.
+# Some container templates include a mail listener; this host does not send mail.
 systemctl disable --now postfix.service 2>/dev/null || true
 systemctl daemon-reload
 systemctl restart systemd-journald.service

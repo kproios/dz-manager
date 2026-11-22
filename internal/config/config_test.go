@@ -30,7 +30,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != "127.0.0.1:8080" || c.DataDir != "/var/lib/dzm" || c.Location.String() != "Europe/Helsinki" || !c.SecureCookies() {
+	if c.Listen != "127.0.0.1:8080" || c.DataDir != "/var/lib/dzm" || c.Location.String() != "UTC" || !c.SecureCookies() {
 		t.Fatalf("bad defaults: %+v", c)
 	}
 	// Single sign-on is optional; Steam sign-in is on unless turned off.
