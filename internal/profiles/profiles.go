@@ -18,7 +18,7 @@ import (
 // Provider kinds.
 const (
 	Selfhosted = "selfhosted"
-	Managed      = "managed"
+	Managed    = "managed"
 	Generic    = "generic"
 )
 

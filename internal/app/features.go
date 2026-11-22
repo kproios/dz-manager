@@ -158,7 +158,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	srv.MCP = &mcp.Server{Keys: a.Keys, API: srv.Public, Version: srv.Version, Log: srv.Log}
 
 	// Data retention with compressed archives. (The SSH emergency kill was
-	// removed: Managed gives no SSH and RCON cannot stop a frozen process.)
+	// removed: managed hosts give no SSH and RCON cannot stop a frozen process.)
 	a.Retention = &retention.Service{DB: a.DB, Audit: srv.Audit, Log: srv.Log, DataDir: a.Cfg.DataDir}
 	a.Retention.Register(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "retention", a.Retention.Run) })
