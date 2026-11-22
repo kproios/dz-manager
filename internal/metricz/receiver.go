@@ -38,10 +38,11 @@ type Receiver struct {
 	// StaleAfter marks the layer stale when no push arrived (default 45 s = 3× MetricZ's 15 s).
 	StaleAfter time.Duration
 
-	mu         sync.Mutex
-	snaps      map[string]Snapshot
-	txns       map[string]*txn
-	liveStates map[string]*liveState
+	mu          sync.Mutex
+	snaps       map[string]Snapshot
+	txns        map[string]*txn
+	liveStates  map[string]*liveState
+	bridgePerfs map[string]bridgePerf
 }
 
 type txn struct {
@@ -52,7 +53,7 @@ type txn struct {
 
 // Register adds the ingest routes.
 func (rc *Receiver) Register(mux *http.ServeMux) {
-	rc.snaps, rc.txns, rc.liveStates = map[string]Snapshot{}, map[string]*txn{}, map[string]*liveState{}
+	rc.snaps, rc.txns, rc.liveStates, rc.bridgePerfs = map[string]Snapshot{}, map[string]*txn{}, map[string]*liveState{}, map[string]bridgePerf{}
 	if rc.StaleAfter == 0 {
 		rc.StaleAfter = 45 * time.Second
 	}
@@ -255,21 +256,31 @@ func (rc *Receiver) Watch(ctx context.Context) {
 }
 
 func (rc *Receiver) recordPerf(ctx context.Context, s Snapshot) error {
-	minute := s.ReceivedAt.Format("2006-01-02T15:04")
+	rc.mu.Lock()
+	_, bridge := rc.bridgePerfLocked(s.ServerID)
+	rc.mu.Unlock()
+	if bridge {
+		return nil // @DZMBridge's report owns the history while it arrives
+	}
+	return rc.writePerf(ctx, s.ServerID, s.ReceivedAt.Format("2006-01-02T15:04"), s.Perf)
+}
+
+// writePerf stores one per-minute performance bucket.
+func (rc *Receiver) writePerf(ctx context.Context, serverID, minute string, p Perf) error {
 	val := func(p *float64) any {
 		if p == nil {
 			return nil
 		}
 		return *p
 	}
-	fps := s.Perf.FPSAvg
+	fps := p.FPSAvg
 	if fps == nil {
-		fps = s.Perf.FPS
+		fps = p.FPS
 	}
 	_, err := rc.DB.ExecContext(ctx, `INSERT INTO metricz_perf(server_id,minute,fps,fps_min,players,infected,animals,items,vehicles) VALUES(?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(server_id,minute) DO UPDATE SET fps=excluded.fps, fps_min=MIN(COALESCE(metricz_perf.fps_min, excluded.fps_min), COALESCE(excluded.fps_min, metricz_perf.fps_min)),
 		players=excluded.players, infected=excluded.infected, animals=excluded.animals, items=excluded.items, vehicles=excluded.vehicles`,
-		s.ServerID, minute, val(fps), val(s.Perf.FPSMin), val(s.Perf.Players), val(s.Perf.Infected), val(s.Perf.Animals), val(s.Perf.Items), s.Perf.Vehicles)
+		serverID, minute, val(fps), val(p.FPSMin), val(p.Players), val(p.Infected), val(p.Animals), val(p.Items), p.Vehicles)
 	return err
 }
 
@@ -288,6 +299,8 @@ type MapState struct {
 	// IntervalSec seconds) or "metricz" (the slower fallback).
 	Source      string  `json:"source,omitempty"`
 	IntervalSec float64 `json:"interval_s,omitempty"`
+	// PerfSource says who reports server performance: "bridge" or "metricz".
+	PerfSource string `json:"perf_source,omitempty"`
 }
 
 // State builds the map state for the active profile.
@@ -306,6 +319,11 @@ func (rc *Receiver) State(ctx context.Context) MapState {
 	}
 	rc.mu.Lock()
 	rc.applyLiveLocked(&st, p.ID)
+	if bp, ok := rc.bridgePerfLocked(p.ID); ok {
+		st.Perf, st.PerfSource = &bp, "bridge"
+	} else if st.Perf != nil {
+		st.PerfSource = "metricz"
+	}
 	rc.mu.Unlock()
 	return st
 }

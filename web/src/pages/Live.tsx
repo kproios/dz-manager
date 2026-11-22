@@ -114,7 +114,7 @@ function Online({ status, map, onShow }: { status?: ServerStatus | null; map?: M
           </tbody>
         </table></div>
       )}
-      {status?.rcon.state === 'ok' && <p className="hint">Roster from BattlEye RCON, health from MetricZ, country and risk flags from Steam and the IP lookup (see Settings → Player checks).</p>}
+      {status?.rcon.state === 'ok' && <p className="hint">Roster from BattlEye RCON, health from @DZMBridge (or MetricZ without it), country and risk flags from Steam and the IP lookup (see Settings → Player checks).</p>}
     </div>
   )
 }

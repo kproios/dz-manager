@@ -31,7 +31,9 @@ actions require an up-to-date @DZMBridge.
 modified by the mod (it only writes `profiles/DZMBridge/config.json`).
 
 ## 2. MetricZ (optional, upstream, unmodified)
-@DZMBridge already sends live positions. MetricZ adds server performance history.
+@DZMBridge already sends live positions and, since its 0.2.2, server performance every minute
+(frame rate, uptime, players, infected, animals, items, vehicles), which DZ Manager prefers. MetricZ
+is only needed with an older @DZMBridge, or when you also export its metrics elsewhere.
 1. Install MetricZ from its upstream source (Steam Workshop id 3594119002 or its release) as a
    **server-side** mod.
 2. Start once to create `profiles/metricz/config.json`, then merge the MetricZ JSON from

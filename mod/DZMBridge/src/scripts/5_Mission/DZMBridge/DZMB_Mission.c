@@ -17,7 +17,10 @@ modded class MissionServer
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		// The world census runs in small slices every frame; everything else once a second.
 		if (b)
+		{
 			b.ContinueTrackingScan();
+			DZMB_Perf.Frame(timeslice);
+		}
 		m_DZMB_Acc += timeslice;
 		if (m_DZMB_Acc < 1.0)
 			return;

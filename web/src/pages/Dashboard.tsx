@@ -35,7 +35,8 @@ export default function Dashboard() {
   const now = useNow(1000)
   const s = srv.data
   const st = status.data
-  const perfNow = map.data?.available ? map.data.perf : undefined
+  const perfNow = map.data?.perf_source === 'bridge' || map.data?.available ? map.data?.perf : undefined
+  const perfFrom = map.data?.perf_source === 'bridge' ? '@DZMBridge' : 'MetricZ'
   const online = s?.rcon.state === 'ok' ? s.players?.length ?? 0 : s?.info?.players ?? 0
   const max = s?.info?.max_players
   const pl = useMemo(() => series(perf.data, 'players'), [perf.data])
@@ -66,7 +67,7 @@ export default function Dashboard() {
           foot={s?.rcon.state === 'ok' ? `RCON roster: ${s.players?.length ?? 0}` : 'From server query'}>
           {max ? <Meter value={online / max} /> : null}
         </StatTile>
-        <StatTile label="Server FPS" value={<span className={fpsColor}>{curFps != null ? curFps.toFixed(0) : '—'}</span>} foot={perfNow?.fps_min != null ? `min ${perfNow.fps_min.toFixed(0)} this minute` : 'MetricZ'}>
+        <StatTile label="Server FPS" value={<span className={fpsColor}>{curFps != null ? curFps.toFixed(0) : '—'}</span>} foot={perfNow?.fps_min != null ? `min ${perfNow.fps_min.toFixed(0)} this minute` : perfFrom}>
           <Sparkline values={sp.map((p) => p.fps)} color="var(--series-2)" />
         </StatTile>
         <StatTile label="Uptime" value={fmtDuration(perfNow?.uptime_seconds)} foot={perfNow?.uptime_seconds ? 'since ' + new Date(Date.now() - perfNow.uptime_seconds * 1000).toLocaleTimeString(undefined, { timeStyle: 'short' }) : '—'} />
@@ -79,7 +80,7 @@ export default function Dashboard() {
 
       <div className="row" style={{ marginBottom: 10 }}>
         <h2>Trends</h2>
-        <span className="muted small">{map.data?.available ? <>MetricZ <Badge state={map.data.fresh ? 'ok' : 'stale'}>{map.data.fresh ? 'live' : 'stale'}</Badge> {ago(map.data.received_at)}</> : map.data?.reason || ''}</span>
+        <span className="muted small">{map.data?.perf_source === 'bridge' ? <>@DZMBridge <Badge state="ok">live</Badge></> : map.data?.available ? <>MetricZ <Badge state={map.data.fresh ? 'ok' : 'stale'}>{map.data.fresh ? 'live' : 'stale'}</Badge> {ago(map.data.received_at)}</> : map.data?.reason || ''}</span>
         <span className="grow" />
         <Seg label="Time range" value={hours} onChange={setHours} options={RANGES} />
       </div>

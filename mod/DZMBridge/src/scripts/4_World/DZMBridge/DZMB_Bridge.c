@@ -502,6 +502,7 @@ class DZMB_Bridge
 			ReconcileTracking();
 		}
 		PushLive(dt);
+		DZMB_Perf.Tick(this, dt);
 		m_WorldAcc += dt;
 		if (m_WorldAcc >= 21600)
 		{

@@ -108,6 +108,8 @@ export interface MapState {
   source?: 'bridge' | 'metricz'; interval_s?: number
   players: MzPlayer[] | null; vehicles: MzVehicle[] | null
   perf?: { fps?: number; fps_avg?: number; fps_min?: number; players?: number; infected?: number; animals?: number; items?: number; vehicles: number; uptime_seconds?: number }
+  /** Who reports server performance: 'bridge' (@DZMBridge, every minute) or 'metricz'. */
+  perf_source?: 'bridge' | 'metricz'
 }
 export interface DeathData { victim?: string; victim_name?: string; killer?: string; killer_name?: string; weapon?: string; cause?: string; distance_m?: number; killer_pos?: { x: number; z: number }; part?: string; detail?: string }
 export interface Marker { id: number; key: string; category: string; class: string; x: number; y: number; z: number; started_at: string; last_seen_at?: string; ended_at?: string; status: string; source: string; observation?: string; kind?:string; name?:string; group?:string; radius?:number; container?: string; data?: DeathData }

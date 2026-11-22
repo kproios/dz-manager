@@ -83,6 +83,12 @@ func (a *App) registerFeatures(ctx context.Context) error {
 		},
 		PublishLive: func(d metricz.LiveDelta) { srv.Hub.Publish("live", d) }}
 	a.MetricZ.OnPlayers = a.Players.Presence
+	// @DZMBridge's own performance report (frame rate, uptime, counts) replaces MetricZ's.
+	a.Bridge.Subscribe(func(ctx context.Context, ev bridge.Event) {
+		if err := a.MetricZ.BridgePerf(ctx, ev.ServerID, ev.Data, ev.Time); err != nil {
+			srv.Log.Warn("bridge perf report", "err", err)
+		}
+	}, "server.perf")
 	a.MetricZ.Register(srv.Ingest)
 	a.MetricZ.RegisterAPI(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "metricz-watch", a.MetricZ.Watch) })
@@ -171,7 +177,7 @@ func (a *App) publicStatus(ctx context.Context) map[string]any {
 			out["players"] = s.Info.Players
 		}
 	}
-	if m := a.MetricZ.State(ctx); m.Available && m.Perf != nil {
+	if m := a.MetricZ.State(ctx); m.Perf != nil && (m.PerfSource == "bridge" || m.Available) {
 		if m.Perf.UptimeSecs != nil {
 			out["uptime_seconds"] = *m.Perf.UptimeSecs
 		}

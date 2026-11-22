@@ -89,6 +89,7 @@ modded class ItemBase
 		super.EEInit();
 		if (!GetGame().IsDedicatedServer())
 			return;
+		DZMB_Perf.s_Items++;
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (!b)
 			return;
@@ -129,6 +130,8 @@ modded class ItemBase
 
 	override void EEDelete(EntityAI parent)
 	{
+		if (GetGame().IsDedicatedServer() && DZMB_Perf.s_Items > 0)
+			DZMB_Perf.s_Items--;
 		DZMB_Bridge b = DZMB_Bridge.Get();
 		if (b && GetGame().IsDedicatedServer())
 			b.OnEntityDeleted(this);
