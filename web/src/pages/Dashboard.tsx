@@ -36,7 +36,7 @@ export default function Dashboard() {
   const s = srv.data
   const st = status.data
   const perfNow = map.data?.perf_source === 'bridge' || map.data?.available ? map.data?.perf : undefined
-  const perfFrom = map.data?.perf_source === 'bridge' ? '@DZMBridge' : 'MetricZ'
+  const perfFrom = map.data?.perf_source === 'bridge' ? '@DZMBridge' : map.data?.perf_source === 'metricz' ? 'MetricZ' : 'waiting for @DZMBridge'
   const online = s?.rcon.state === 'ok' ? s.players?.length ?? 0 : s?.info?.players ?? 0
   const max = s?.info?.max_players
   const pl = useMemo(() => series(perf.data, 'players'), [perf.data])

@@ -131,7 +131,7 @@ export default function Settings() {
                       <button className="small" onClick={() => setEdit({ ...blank, ...p, rcon_password: '' })}>Edit</button>
                       <button className="small" onClick={() => showWizard(p)} title="Show the configs to paste on the game server">Connect…</button>
                       {!p.active && <button className="small" onClick={() => setConfirm({ p, what: 'activate' })}>Make active</button>}
-                      <button className="small ghost" onClick={() => setConfirm({ p, what: 'rotate-ingest' })} title="Replace the MetricZ and bridge credentials">Rotate keys</button>
+                      <button className="small ghost" onClick={() => setConfirm({ p, what: 'rotate-ingest' })} title="Replace the game server's ingest credentials">Rotate keys</button>
                       {!p.active && <button className="small ghost" onClick={() => setConfirm({ p, what: 'archive' })}>Archive</button>}
                     </div>}
                   </td>
@@ -176,7 +176,7 @@ export default function Settings() {
         title={confirm.what === 'rotate-ingest' ? `Rotate ingest keys for ${confirm.p.name}?` : confirm.what === 'archive' ? `Archive ${confirm.p.name}?` : `Make ${confirm.p.name} the active server?`}
         word={confirm.what === 'rotate-ingest' ? 'ROTATE' : undefined} tone={confirm.what === 'activate' ? 'primary' : 'danger'}
         confirmLabel={confirm.what === 'rotate-ingest' ? 'Rotate keys' : confirm.what === 'archive' ? 'Archive' : 'Make active'}
-        body={<p>{confirm.what === 'rotate-ingest' ? 'The current MetricZ and bridge credentials stop working immediately. You must paste the new configs on the game server.' : confirm.what === 'archive' ? 'The server disappears from the lists. Its history is kept.' : 'Every page, the map and all actions switch to this server.'}</p>}
+        body={<p>{confirm.what === 'rotate-ingest' ? 'The current ingest credentials (@DZMBridge, and MetricZ if used) stop working immediately. Paste the new configuration on the game server.' : confirm.what === 'archive' ? 'The server disappears from the lists. Its history is kept.' : 'Every page, the map and all actions switch to this server.'}</p>}
         onClose={() => setConfirm(null)} onConfirm={() => { act(confirm.p, confirm.what); setConfirm(null) }} />}
       {wizard && (
         <div className="modal-bg" onClick={() => setWizard(null)}>
@@ -184,8 +184,10 @@ export default function Settings() {
             <h3>Connect the game server</h3>
             <ol>{wizard.steps.map((s: string) => <li key={s}>{s}</li>)}</ol>
             <Snippet title="Launch parameter" text={wizard.servermod_line} />
-            <Snippet title={`${wizard.metricz_config_path} (merge)`} text={JSON.stringify(wizard.metricz_config, null, 2)} />
             <Snippet title={wizard.bridge_config_path} text={JSON.stringify(wizard.bridge_config, null, 2)} />
+            <details><summary className="muted small">Optional: MetricZ (only if you also export its metrics elsewhere; @DZMBridge already reports performance)</summary>
+              <Snippet title={`${wizard.metricz_config_path} (merge)`} text={JSON.stringify(wizard.metricz_config, null, 2)} />
+            </details>
             <p className="hint warn">These contain secrets. Viewing them was audited.</p>
             <div className="row end"><button onClick={() => setWizard(null)}>Close</button></div>
           </div>

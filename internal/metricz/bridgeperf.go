@@ -40,7 +40,7 @@ func (rc *Receiver) BridgePerf(ctx context.Context, serverID string, data []byte
 	_, hasMetricZ := rc.snaps[serverID]
 	rc.mu.Unlock()
 	if !hasMetricZ {
-		rc.Caps.Set(serverID, caps.MetricZ, caps.Unconfigured, "not needed: @DZMBridge reports server performance")
+		rc.Caps.Set(serverID, caps.MetricZ, caps.Unconfigured, "not used: @DZMBridge reports server performance")
 	}
 	return rc.writePerf(ctx, serverID, at.UTC().Format("2006-01-02T15:04"), p)
 }

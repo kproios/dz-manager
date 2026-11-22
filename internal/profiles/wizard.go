@@ -2,7 +2,7 @@ package profiles
 
 import "fmt"
 
-// Wizard is the copy-paste material the owner needs to connect a game server.
+// Wizard is the copy-paste material an operator needs to connect a game server.
 type Wizard struct {
 	ServerID      string         `json:"server_id"`
 	ServerModLine string         `json:"servermod_line"`
@@ -16,22 +16,23 @@ type Wizard struct {
 // BuildWizard renders the configs for a profile. ingestURL is DZM_INGEST_PUBLIC_URL.
 func BuildWizard(p *Profile, sec *Secrets, ingestURL string) Wizard {
 	steps := []string{
-		"Download DZMBridge.zip from the latest GitHub release and extract the @DZMBridge folder next to the DayZ server.",
-		"Install MetricZ (upstream, unmodified) as a server-side mod.",
-		"Add both to the server-side mods launch parameter (line below). They are server-only: never add them to -mod=.",
-		"Start the server once so both mods create their config files, then merge the JSON below into them and restart.",
-		"Watch Capabilities on the dashboard: metricz and bridge turn 'ok' when data arrives.",
+		"Download DZMBridge.zip from the latest GitHub release (or subscribe to it on the Steam Workshop) and put the @DZMBridge folder next to the DayZ server.",
+		"Add it to the server-side mods launch parameter (line below). It is server-only: never add it to -mod=.",
+		"Start the server once so the mod creates its config file, then replace that file with the JSON below and restart.",
+		"Watch the dashboard: the bridge capability turns 'ok' when the first data arrives.",
 	}
 	switch p.ProviderKind {
 	case Selfhosted:
-		steps[2] = "Add @DZMBridge (and @MetricZ if you use it) to the server's start line as server mods: -servermod=… in your launch script or panel. They are server-only: never add them to -mod=."
+		steps[1] = "Add @DZMBridge to the server's start line as a server mod (-servermod=@DZMBridge) in your launch script. It is server-only: never add it to -mod=."
 	case Managed:
-		steps[0] = "Download DZMBridge.zip from the latest GitHub release and upload the @DZMBridge folder via the host's panel file manager."
-		steps[3] = "Start the server once, then edit the two config files in the panel file manager (profiles folder) and restart."
+		steps[0] = "Download DZMBridge.zip from the latest GitHub release and upload the @DZMBridge folder with your host panel's file manager (or subscribe to it on the Steam Workshop)."
+		steps[1] = "Add @DZMBridge to the panel's server-side mods field. It is server-only: never add it to the client mods."
+		steps[2] = "Start the server once, then edit profiles/DZMBridge/config.json in the panel's file manager and restart."
 	}
 	return Wizard{
-		ServerID:      p.ID,
-		ServerModLine: "-servermod=@MetricZ;@DZMBridge",
+		ServerID: p.ID,
+		// MetricZ is optional: its config stays available for operators who also run it.
+		ServerModLine: "-servermod=@DZMBridge",
 		MetricZPath:   "$profile:metricz/config.json",
 		MetricZConfig: map[string]any{
 			"settings":         map[string]any{"disable_telemetry": true},

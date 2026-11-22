@@ -246,9 +246,17 @@ func (rc *Receiver) Watch(ctx context.Context) {
 		case <-t.C:
 			rc.mu.Lock()
 			for id, s := range rc.snaps {
-				if time.Since(s.ReceivedAt) > rc.StaleAfter {
-					rc.Caps.Set(id, caps.MetricZ, caps.Degraded, "no MetricZ push since "+s.ReceivedAt.Format(time.RFC3339))
+				if time.Since(s.ReceivedAt) <= rc.StaleAfter {
+					continue
 				}
+				if _, bridge := rc.bridgePerfLocked(id); bridge {
+					// MetricZ was removed and the bridge covers it: forget it instead of
+					// reporting a missing optional integration forever.
+					delete(rc.snaps, id)
+					rc.Caps.Set(id, caps.MetricZ, caps.Unconfigured, "not used: @DZMBridge reports server performance")
+					continue
+				}
+				rc.Caps.Set(id, caps.MetricZ, caps.Degraded, "no MetricZ push since "+s.ReceivedAt.Format(time.RFC3339))
 			}
 			rc.mu.Unlock()
 		}

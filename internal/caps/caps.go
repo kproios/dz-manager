@@ -25,6 +25,10 @@ const (
 // All lists capabilities in display order.
 var All = []Name{RCON, A2S, MetricZ, Bridge, BridgeCommands, ProviderSchedule, RestartDrive}
 
+// Optional capabilities are integrations nothing depends on: List leaves them
+// out until they are in use, so an unused one never shows as missing.
+var Optional = map[Name]bool{MetricZ: true}
+
 // State of a capability for one server.
 type State string
 
@@ -87,10 +91,15 @@ func (r *Registry) Get(serverID string, n Name) Status {
 func (r *Registry) OK(serverID string, n Name) bool { return r.Get(serverID, n).State == OK }
 
 // List returns all known capabilities for a server in display order.
+// Optional ones appear only while configured (any state but Unconfigured).
 func (r *Registry) List(serverID string) []Status {
 	out := make([]Status, 0, len(All))
 	for _, n := range All {
-		out = append(out, r.Get(serverID, n))
+		s := r.Get(serverID, n)
+		if Optional[n] && s.State == Unconfigured {
+			continue
+		}
+		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return indexOf(out[i].Name) < indexOf(out[j].Name) })
 	return out
