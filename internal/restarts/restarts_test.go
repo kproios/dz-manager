@@ -392,6 +392,84 @@ func TestMissedPlanned(t *testing.T) {
 	}
 }
 
+// A provider that relaunches within seconds is never seen offline by the
+// poll; the game's own start report still records the restart, so it is not
+// logged as missed and the schedule badge turns ok.
+func TestFastRestartRecordedFromServerStart(t *testing.T) {
+	e, svc, c, _, id := setup(t)
+	ctx := context.Background()
+	sc := sched("12:00", "16:00")
+	sc.ServerID = id
+	if err := svc.Save(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+	var locks []bool
+	svc.OnLock = func(v bool) { locks = append(locks, v) }
+	svc.Observe(ctx, id, true)
+	noon := time.Date(2026, 11, 4, 12, 0, 0, 0, helsinki)
+	c.set(noon.Add(20 * time.Second))
+	svc.ServerStarted(ctx, id, noon.Add(15*time.Second))
+	for at := noon.Add(30 * time.Second); at.Before(noon.Add(5 * time.Minute)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Observe(ctx, id, true) // the poll only ever saw it online
+		svc.Tick(ctx)
+	}
+	evs, _ := svc.Events(ctx, id, 10)
+	if len(evs) != 1 || evs[0].Kind != "planned" || evs[0].Outcome != "ok" || *evs[0].DurationS != 15 || !evs[0].PlannedFor.Equal(noon) {
+		t.Fatalf("planned fast restart: %+v", evs)
+	}
+	if !e.App.Caps.OK(id, "provider.schedule") || len(locks) == 0 || locks[0] {
+		t.Fatalf("schedule badge %+v, locks %v", e.App.Caps.Get(id, "provider.schedule"), locks)
+	}
+	// The same start reported again (replay) adds nothing.
+	svc.ServerStarted(ctx, id, noon.Add(15*time.Second))
+	// A start delivered long after the fact says nothing about now.
+	svc.ServerStarted(ctx, id, noon.Add(-2*time.Hour))
+	// "Restart now" at 14:00, back 12 s later.
+	req := time.Date(2026, 11, 4, 14, 0, 0, 0, helsinki)
+	e.App.DB.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "restart_now_until:"+id, fmt.Sprint(req.Add(3*time.Minute).Unix()))
+	c.set(req.Add(15 * time.Second))
+	svc.ServerStarted(ctx, id, req.Add(12*time.Second))
+	// A crash restart at 15:00, outside the schedule.
+	c.set(time.Date(2026, 11, 4, 15, 0, 30, 0, helsinki))
+	svc.ServerStarted(ctx, id, time.Date(2026, 11, 4, 15, 0, 20, 0, helsinki))
+	evs, _ = svc.Events(ctx, id, 10)
+	if len(evs) != 3 || evs[0].Kind != "unplanned" || evs[1].Kind != "manual" || *evs[1].DurationS != 12 || evs[2].Kind != "planned" {
+		t.Fatalf("events: %+v", evs)
+	}
+	// A start that arrives after the restart was written off as missed replaces it.
+	for at := time.Date(2026, 11, 4, 16, 2, 0, 0, helsinki); at.Before(time.Date(2026, 11, 4, 16, 4, 0, 0, helsinki)); at = at.Add(10 * time.Second) {
+		c.set(at)
+		svc.Tick(ctx)
+	}
+	if evs, _ = svc.Events(ctx, id, 1); evs[0].Kind != "missed" {
+		t.Fatalf("16:00 not written off yet: %+v", evs)
+	}
+	c.set(time.Date(2026, 11, 4, 16, 6, 0, 0, helsinki))
+	svc.ServerStarted(ctx, id, time.Date(2026, 11, 4, 16, 5, 50, 0, helsinki))
+	evs, _ = svc.Events(ctx, id, 10)
+	if len(evs) != 4 || evs[0].Kind != "planned" || evs[0].Outcome != "ok" {
+		t.Fatalf("late planned start: %+v", evs)
+	}
+}
+
+// History written by older versions: planned restarts logged as missed
+// although the game reported starting 30 s later are corrected.
+func TestReconcileMissedWithServerStart(t *testing.T) {
+	e, svc, _, _, id := setup(t)
+	ctx := context.Background()
+	e.App.DB.Exec(`INSERT INTO restart_events(server_id,planned_for,kind,outcome) VALUES(?,?,'missed','missed'),(?,?,'missed','missed')`,
+		id, "2026-11-04T10:00:00Z", id, "2026-11-04T14:00:00Z")
+	e.App.DB.Exec(`INSERT INTO events(server_id,event_id,type,ts,received_at,source,data,known) VALUES(?,?,?,?,?,?,?,1)`,
+		id, "boot-1", "server.start", "2026-11-04T10:00:33Z", "2026-11-04T10:00:34Z", "mod", "{}")
+	svc.Reconcile(ctx)
+	svc.Reconcile(ctx)
+	evs, _ := svc.Events(ctx, id, 10)
+	if len(evs) != 2 || evs[0].Kind != "missed" || evs[1].Kind != "planned" || evs[1].Outcome != "ok" || *evs[1].DurationS != 33 {
+		t.Fatalf("reconciled: %+v", evs)
+	}
+}
+
 func TestAnnouncementsAndDriveDryRun(t *testing.T) {
 	e, svc, c, sent, id := setup(t)
 	ctx := context.Background()

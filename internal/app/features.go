@@ -66,6 +66,8 @@ func (a *App) registerFeatures(ctx context.Context) error {
 			srv.Hub.Publish("events", map[string]any{"server_id": id, "types": types})
 		}}
 	a.Bridge.Init()
+	// The game reporting its own start records restarts the status poll is too slow to see.
+	a.Bridge.Subscribe(func(ctx context.Context, ev bridge.Event) { a.Restarts.ServerStarted(ctx, ev.ServerID, ev.Time) }, "server.start")
 	a.Bridge.Register(srv.Ingest)
 	a.Bridge.RegisterAPI(srv.API)
 	a.starters = append(a.starters, func(ctx context.Context) { srv.Background(ctx, "bridge-watch", a.Bridge.Watch) })

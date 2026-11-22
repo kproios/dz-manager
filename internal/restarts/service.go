@@ -220,6 +220,7 @@ func (s *Service) publish() {
 
 // Run is the scheduler loop.
 func (s *Service) Run(ctx context.Context) {
+	s.Reconcile(ctx)
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
