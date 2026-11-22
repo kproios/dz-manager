@@ -159,4 +159,19 @@ var Tools = []Tool{
 			}
 			return "POST", "/message", nil, map[string]any{"text": text, "steam64": str(a, "steam64")}, nil
 		}},
+
+	{Name: "restart_server", Title: "Restart the game server", Scope: "server:restart", Destructive: true,
+		Description: "Restarts the game server: delay_minutes 0 shuts it down now, 1-30 starts a countdown that warns players first. Needs confirm \"RESTART\". The hosting provider brings the server back; watch server_status for it. Refused while the server is offline or a restart is already under way. Ask the human first.",
+		Props: map[string]any{
+			"delay_minutes": map[string]any{"type": "integer", "enum": []int{0, 1, 2, 5, 10, 15, 30}, "description": "0 = now"},
+			"confirm":       map[string]any{"type": "string", "description": "RESTART, only after the human approved"},
+		},
+		Required: []string{"confirm"},
+		Build: func(a map[string]any) (string, string, url.Values, any, error) {
+			body := map[string]any{"confirm": str(a, "confirm"), "delay_minutes": 0}
+			if n, ok := num(a, "delay_minutes"); ok {
+				body["delay_minutes"] = int(n)
+			}
+			return "POST", "/restart", nil, body, nil
+		}},
 }

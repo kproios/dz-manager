@@ -122,7 +122,7 @@ export function ApiKeys() {
             </label>)}
           </div>
           <div className="field">Expires<Seg label="Expires" value={form.days} onChange={(v) => setForm({ ...form, days: v })} options={EXPIRY} /></div>
-          {sensitive && <p className="warn small">This key can see Steam IDs or positions{form.scopes.includes('actions:write') ? ' and change the game' : ''}. Keep it on a server or in your AI client, never in a web page.</p>}
+          {sensitive && <p className="warn small">This key can see Steam IDs or positions{form.scopes.includes('actions:write') ? ' and change the game' : ''}{form.scopes.includes('server:restart') ? ' and restart the server' : ''}. Keep it on a server or in your AI client, never in a web page.</p>}
         </div>} />}
       {revoke && <Confirm title={`Revoke “${revoke.name}”?`} confirmLabel="Revoke" onClose={() => setRevoke(null)} onConfirm={doRevoke}
         body={<p>The key stops working immediately. Anything using it needs a new key.</p>} />}

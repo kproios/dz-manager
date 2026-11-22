@@ -66,6 +66,8 @@ func OpenAPI(version string) map[string]any {
 				m{"name": "action", "in": "path", "required": true, "schema": m{"type": "string", "enum": []string{"vehicle_refuel", "vehicle_repair", "vehicle_flip", "vehicle_stop_engine", "vehicle_delete"}}}),
 			"/message": post("actions:write", "Message players", "On-screen message to everyone, or to one player with steam64.",
 				m{"content": m{"application/json": m{"schema": m{"type": "object", "required": []string{"text"}, "properties": m{"text": m{"type": "string", "maxLength": 200}, "steam64": str}}}}}),
+			"/restart": post("server:restart", "Restart the server", "delay_minutes 0 shuts the server down now (the provider relaunches it); 1-30 starts a countdown that warns players. confirm must be RESTART. 409 while the server is offline, the provider relaunch is unverified or a restart is under way.",
+				m{"content": m{"application/json": m{"schema": m{"type": "object", "required": []string{"confirm"}, "properties": m{"confirm": m{"type": "string", "enum": []string{"RESTART"}}, "delay_minutes": m{"type": "integer", "enum": []int{0, 1, 2, 5, 10, 15, 30}}}}}}}),
 		},
 	}
 }

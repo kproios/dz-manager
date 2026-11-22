@@ -42,6 +42,7 @@ var Scopes = []Scope{
 	{"priority:read", "Priority queue export", "Players with queue priority and when it ends (Steam64), as JSON or text.", true},
 	{"map:read", "Live map", "Live positions of players and vehicles and the active events. Admin-level information.", true},
 	{"actions:write", "Game actions", "Teleport, heal, give items, kill, strip, message players, and refuel, repair, flip, stop or delete vehicles. Destructive ones still need their confirmation word.", true},
+	{"server:restart", "Server restart", "Restart the game server now or after a countdown that warns players. Needs the confirmation word RESTART; the hosting provider brings the server back.", true},
 }
 
 // ScopeNames returns the valid scope names.

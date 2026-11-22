@@ -303,10 +303,11 @@ func Resolve(pattern string, r *http.Request) (p Permission, stepUp, ok bool) {
 
 // Scope is an API key scope and the permission its owner needs to use it.
 var ScopePerm = map[string]Permission{
-	"public":        ViewLive,
-	"players:read":  ViewLive,
-	"bans:read":     BansManage,
-	"priority:read": BansManage,
-	"map:read":      ViewLive,
-	"actions:write": ActionsSafe,
+	"public":         ViewLive,
+	"players:read":   ViewLive,
+	"bans:read":      BansManage,
+	"priority:read":  BansManage,
+	"map:read":       ViewLive,
+	"actions:write":  ActionsSafe,
+	"server:restart": ServerControl,
 }

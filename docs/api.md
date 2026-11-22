@@ -15,6 +15,7 @@ actions), and it stops when the user is disabled or removed. See [accounts](acco
 | `priority:read` | Queue priority (Steam64 and end), as JSON or text. |
 | `map:read` | The world, live players and vehicles with positions, active events. |
 | `actions:write` | Player actions, vehicle actions and on-screen messages. Destructive ones still need their confirmation word. |
+| `server:restart` | Restart the game server now or after a countdown that warns players (confirmation word `RESTART`). Only for users whose role may control the server. |
 
 Only ever put a key with **just** `public` in browser code; keep the others on a server or in your
 AI client.
@@ -34,6 +35,7 @@ browser. The OpenAPI 3.1 description is at `/public/v1/openapi.json` (no key nee
 | `POST /players/{steam64}/actions/{teleport\|give_item\|heal\|kill\|strip}` | `actions:write` |
 | `POST /vehicles/{id}/actions/{vehicle_refuel\|vehicle_repair\|vehicle_flip\|vehicle_stop_engine\|vehicle_delete}` | `actions:write` |
 | `POST /message` `{"text": "…", "steam64": "optional"}` | `actions:write` |
+| `POST /restart` `{"confirm": "RESTART", "delay_minutes": 0\|1\|2\|5\|10\|15\|30}` | `server:restart` |
 
 Examples:
 ```bash
@@ -71,9 +73,12 @@ Tools (a client only sees those its key's scopes allow):
 | `priority_list` | `priority:read` |
 | `live_map` | `map:read` |
 | `player_action`, `vehicle_action`, `send_message` | `actions:write` |
+| `restart_server` | `server:restart` |
 
 Safety: each tool runs the matching REST route in-process with the same key, so validation, scopes,
 confirmation words and the audit log are identical. Write tools are marked `destructiveHint`, the
 server tells the assistant to ask the human before any write, and destructive actions need their
-confirmation word (`KILL`, `STRIP`, `DELETE`). Requests with an `Origin` header (browsers) are
+confirmation word (`KILL`, `STRIP`, `DELETE`, `RESTART`). A restart goes through the same checks as
+the panel's: the provider's relaunch must be verified, the server online, and no other restart under
+way. Requests with an `Origin` header (browsers) are
 refused. For an assistant that should only look, give its key no `actions:write`.

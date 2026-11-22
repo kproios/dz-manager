@@ -10,6 +10,8 @@
 //     (ban lists to share between servers, priority queues) and live positions.
 //   - actions:write: player and vehicle actions and messages, audited under
 //     the key's name.
+//   - server:restart: restart the game server (confirm RESTART), now or after
+//     a countdown, through the same checks and audit as the panel.
 //
 // GET routes send CORS headers so a website can call them from the browser;
 // only ever put a key with just the public scope in browser code.
@@ -59,6 +61,8 @@ type API struct {
 	Actions *actions.API
 	// Notify sends an on-screen message to everyone (steam64 "") or one player.
 	Notify func(ctx context.Context, a audit.Actor, steam64, text string) error
+	// Restart serves a restart request for the key's actor.
+	Restart func(w http.ResponseWriter, r *http.Request, a audit.Actor)
 	// Version is the dzm version, shown in the OpenAPI document.
 	Version string
 }
@@ -170,6 +174,10 @@ func (a *API) RegisterPublic(mux *http.ServeMux) {
 		a.runAction(w, r, "vehicle", r.PathValue("id"))
 	}))
 	mux.HandleFunc("POST /public/v1/message", k.Require("actions:write", a.message))
+	// server:restart
+	mux.HandleFunc("POST /public/v1/restart", k.Require("server:restart", func(w http.ResponseWriter, r *http.Request) {
+		a.Restart(w, r, apikeys.FromContext(r.Context()).Actor())
+	}))
 }
 
 func (a *API) runAction(w http.ResponseWriter, r *http.Request, target, id string) {

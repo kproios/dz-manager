@@ -144,7 +144,7 @@ func (a *App) registerFeatures(ctx context.Context) error {
 	a.Keys.MigrateBotToken(ctx)
 	a.Keys.RegisterAdmin(srv.API)
 	bot := &publicapi.API{DB: a.DB, Audit: srv.Audit, Bus: a.Hooks, Keys: a.Keys, Status: a.publicStatus, Online: a.onlineNames,
-		Map: a.liveMap, Actions: a.Actions, Notify: a.notify, Version: srv.Version}
+		Map: a.liveMap, Actions: a.Actions, Notify: a.notify, Restart: a.Restarts.HandleRequest, Version: srv.Version}
 	bot.RegisterAdmin(srv.API)
 	bot.RegisterPublic(srv.Public)
 	srv.MCP = &mcp.Server{Keys: a.Keys, API: srv.Public, Version: srv.Version, Log: srv.Log}

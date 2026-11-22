@@ -107,51 +107,74 @@ func (s *Service) apiNow(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, 400, err.Error())
 		return
 	}
-	if in.Confirm != "RESTART" {
-		httpx.Error(w, 400, "type RESTART to confirm")
-		return
-	}
-	allowed := false
-	for _, d := range ManualDelays {
-		allowed = allowed || d == in.Delay
-	}
-	if !allowed {
-		httpx.Error(w, 400, fmt.Sprintf("delay_minutes must be one of %v", ManualDelays))
-		return
-	}
-	p, _, err := s.Profiles.Active(r.Context())
+	s.writeRequest(w, r.Context(), actor(r), in.Confirm, in.Delay)
+}
+
+// writeRequest runs Request and writes its result as the HTTP response.
+func (s *Service) writeRequest(w http.ResponseWriter, ctx context.Context, a audit.Actor, confirm string, delay int) {
+	body, err := s.Request(ctx, a, confirm, delay)
 	if err != nil {
-		httpx.Error(w, 409, "no active server profile")
-		return
-	}
-	if _, pending := s.PendingManual(r.Context(), p.ID); pending {
-		httpx.Error(w, 409, "a countdown restart is already pending; cancel it first")
-		return
-	}
-	a := actor(r)
-	if in.Delay == 0 {
-		if err := s.shutdownNow(r.Context(), a, p.ID, nil); err != nil {
-			writeErr(w, err)
-			return
-		}
-		httpx.JSON(w, 202, map[string]any{"requested": true, "message": "Restart requested. Waiting for the provider to bring the server back."})
-		return
-	}
-	if err := s.checkRestartable(r.Context(), p.ID); err != nil {
 		writeErr(w, err)
 		return
 	}
+	httpx.JSON(w, 202, body)
+}
+
+// Request restarts the active server for a: immediately (delay 0) or after a
+// countdown that warns players. confirm must be "RESTART". The panel, the
+// public API and the MCP server all come through here, so they share the
+// same checks (provider verified, server online, no duplicate) and audit.
+func (s *Service) Request(ctx context.Context, a audit.Actor, confirm string, delay int) (map[string]any, error) {
+	if confirm != "RESTART" {
+		return nil, apiErr{400, "type RESTART to confirm"}
+	}
+	allowed := false
+	for _, d := range ManualDelays {
+		allowed = allowed || d == delay
+	}
+	if !allowed {
+		return nil, apiErr{400, fmt.Sprintf("delay_minutes must be one of %v", ManualDelays)}
+	}
+	p, _, err := s.Profiles.Active(ctx)
+	if err != nil {
+		return nil, apiErr{409, "no active server profile"}
+	}
+	if _, pending := s.PendingManual(ctx, p.ID); pending {
+		return nil, apiErr{409, "a countdown restart is already pending; cancel it first"}
+	}
+	if delay == 0 {
+		if err := s.shutdownNow(ctx, a, p.ID, nil); err != nil {
+			return nil, err
+		}
+		return map[string]any{"requested": true, "message": "Restart requested. Waiting for the provider to bring the server back."}, nil
+	}
+	if err := s.checkRestartable(ctx, p.ID); err != nil {
+		return nil, err
+	}
 	now := s.Now().UTC().Truncate(time.Second)
-	m := Manual{At: now.Add(time.Duration(in.Delay) * time.Minute), Requested: now, Delay: in.Delay, By: a.Name, BySub: a.Sub}
+	m := Manual{At: now.Add(time.Duration(delay) * time.Minute), Requested: now, Delay: delay, By: a.Name, BySub: a.Sub}
 	b, _ := json.Marshal(m)
-	if _, err := s.DB.ExecContext(r.Context(), `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, manualKey(p.ID), string(b)); err != nil {
-		httpx.Error(w, 500, "could not record restart request")
+	if _, err := s.DB.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, manualKey(p.ID), string(b)); err != nil {
+		return nil, apiErr{500, "could not record restart request"}
+	}
+	_ = s.Audit.Write(ctx, a, "restart.countdown", p.ID, map[string]any{"delay_minutes": delay, "planned_for": m.At}, "ok", "")
+	s.manualTick(ctx, s.Load(ctx, p.ID), s.Now()) // first announcement right away
+	s.publish()
+	return map[string]any{"requested": true, "manual": m, "message": fmt.Sprintf("Restart in %d minute(s). Players are being warned.", delay)}, nil
+}
+
+// HandleRequest serves a restart request made with an API key (the public
+// API and the MCP server): body {"confirm":"RESTART","delay_minutes":n}.
+func (s *Service) HandleRequest(w http.ResponseWriter, r *http.Request, a audit.Actor) {
+	var in struct {
+		Confirm string `json:"confirm"`
+		Delay   int    `json:"delay_minutes"`
+	}
+	if err := httpx.Decode(r, 1024, &in); err != nil {
+		httpx.Error(w, 400, err.Error())
 		return
 	}
-	_ = s.Audit.Write(r.Context(), a, "restart.countdown", p.ID, map[string]any{"delay_minutes": in.Delay, "planned_for": m.At}, "ok", "")
-	s.manualTick(r.Context(), s.Load(r.Context(), p.ID), s.Now()) // first announcement right away
-	s.publish()
-	httpx.JSON(w, 202, map[string]any{"requested": true, "manual": m, "message": fmt.Sprintf("Restart in %d minute(s). Players are being warned.", in.Delay)})
+	s.writeRequest(w, r.Context(), a, in.Confirm, in.Delay)
 }
 
 // apiCancel cancels a pending countdown restart and unlocks if it locked.

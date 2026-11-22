@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -271,6 +272,40 @@ func TestMCP(t *testing.T) {
 	}
 	var actor string
 	e.App.DB.QueryRow(`SELECT actor_name FROM audit_log WHERE action='vehicle.repair'`).Scan(&actor)
+	if !strings.Contains(actor, "API key") {
+		t.Fatalf("audit actor = %q", actor)
+	}
+}
+
+func TestMCPRestartServer(t *testing.T) {
+	e := setup(t)
+	svc := e.App.Restarts
+	sent := []string{}
+	svc.Exec = func(_ context.Context, cmd string) error { sent = append(sent, cmd); return nil }
+	svc.Observe(e.Ctx, e.server, true)
+	e.JSON("POST", "/api/restarts/drive-verification", map[string]any{"verified": true, "evidence": "test provider relaunches after #shutdown"}, nil)
+	write := e.key(t, "public", "actions:write")
+	restart := e.key(t, "public", "server:restart")
+
+	_, res := mcpCall(t, e, write, "tools/call", map[string]any{"name": "restart_server", "arguments": map[string]any{"confirm": "RESTART"}})
+	if res["error"] == nil || len(sent) != 0 {
+		t.Fatalf("actions:write key restarted the server: %v %v", res, sent)
+	}
+	_, res = mcpCall(t, e, restart, "tools/call", map[string]any{"name": "restart_server", "arguments": map[string]any{"confirm": "restart"}})
+	if result, _ := res["result"].(map[string]any); result["isError"] != true || len(sent) != 0 {
+		t.Fatalf("restart without RESTART: %v %v", res, sent)
+	}
+	_, res = mcpCall(t, e, restart, "tools/call", map[string]any{"name": "restart_server", "arguments": map[string]any{"confirm": "RESTART", "delay_minutes": 0}})
+	if result, _ := res["result"].(map[string]any); result == nil || result["isError"] == true || len(sent) != 1 || sent[0] != "#shutdown" {
+		t.Fatalf("restart_server: %v %v", res, sent)
+	}
+	// A second request while the first is under way is refused.
+	_, res = mcpCall(t, e, restart, "tools/call", map[string]any{"name": "restart_server", "arguments": map[string]any{"confirm": "RESTART"}})
+	if result, _ := res["result"].(map[string]any); result["isError"] != true || len(sent) != 1 {
+		t.Fatalf("duplicate restart: %v %v", res, sent)
+	}
+	var actor string
+	e.App.DB.QueryRow(`SELECT actor_name FROM audit_log WHERE action='restart.now'`).Scan(&actor)
 	if !strings.Contains(actor, "API key") {
 		t.Fatalf("audit actor = %q", actor)
 	}
