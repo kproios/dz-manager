@@ -13,7 +13,16 @@ while (($#)); do
     esac
 done
 [[ $domain =~ ^[a-z0-9.-]+$ && $domain == *.* ]] || { echo 'Supply --domain with your own domain (for example example.com)' >&2; exit 1; }
-[[ -z $ssh_address || $ssh_address =~ ^192\.168\.[0-9]{1,3}\.[0-9]{1,3}$ || $ssh_address =~ ^10\.[0-9.]+$ ]] || exit 1
+# SSH is left exactly as it is unless --ssh-address asks for the optional hardening.
+if [[ -n $ssh_address ]]; then
+    [[ $ssh_address =~ ^192\.168\.[0-9]{1,3}\.[0-9]{1,3}$ || $ssh_address =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] ||
+        { echo '--ssh-address must be a private address of this machine (192.168.x.x or 10.x.x.x)' >&2; exit 1; }
+    ip -o addr show | grep -qw "inet $ssh_address" ||
+        { echo "--ssh-address $ssh_address is not an address of this machine" >&2; exit 1; }
+    # The hardening allows key sign-in for root only: refuse it unless a root key exists.
+    grep -qsE '^(ssh|ecdsa|sk-)' /root/.ssh/authorized_keys ||
+        { echo '--ssh-address needs an SSH key in /root/.ssh/authorized_keys first (it turns password sign-in off)' >&2; exit 1; }
+fi
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 source /etc/os-release
 [[ $ID == debian ]] || { echo 'Only Debian is supported' >&2; exit 1; }
@@ -71,7 +80,7 @@ fi
 chown root:dzm /etc/dzm/dzm.env
 chmod 0640 /etc/dzm/dzm.env
 if [[ ! -f /etc/dzm/updater.env ]]; then
-    printf '# Fine-grained PAT, this repository only, Contents read-only\nGITHUB_TOKEN=\n' >/etc/dzm/updater.env
+    printf '# Optional. Releases are public; a GitHub token only raises the API rate limit\n# (useful on shared or cloud IP addresses). Fine-grained, read-only, no other permissions.\nGITHUB_TOKEN=\n' >/etc/dzm/updater.env
 fi
 chown root:root /etc/dzm/updater.env
 chmod 0600 /etc/dzm/updater.env
@@ -118,9 +127,6 @@ EOF
     systemctl disable --now ssh.socket 2>/dev/null || true
     systemctl enable ssh.service
     systemctl reload-or-restart ssh.service || systemctl restart ssh.service
-else
-    # No SSH exposure by default; manage the machine from its console.
-    systemctl disable --now ssh.socket ssh.service 2>/dev/null || true
 fi
 # Some container templates include a mail listener; this host does not send mail.
 systemctl disable --now postfix.service 2>/dev/null || true
@@ -128,5 +134,17 @@ systemctl daemon-reload
 systemctl restart systemd-journald.service
 systemctl enable dzm.service
 systemctl enable --now dzm-update.timer dzm-backup.timer apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
-if [[ -x /opt/dzm/current/dzm ]]; then systemctl start dzm.service; fi
-echo 'Installation complete. Configure OIDC, read-only GitHub token and tunnel before public use.'
+if [[ -x /opt/dzm/current/dzm ]]; then
+    systemctl start dzm.service
+else
+    # First install: fetch and start the current release now instead of waiting for the timer.
+    systemctl start dzm-update.service || echo 'Could not install the release yet: see journalctl -u dzm-update.service'
+fi
+cat <<'EOF'
+Installation complete. Next:
+  1. Check DZM_PUBLIC_URL, DZM_INGEST_PUBLIC_URL and DZM_TZ in /etc/dzm/dzm.env
+     (then: systemctl restart dzm.service).
+  2. Publish the panel over HTTPS, for example with the Cloudflare tunnel (deploy/cloudflared/README.md).
+  3. Create the first owner account:
+     systemd-run --pipe --wait -p User=dzm -p EnvironmentFile=/etc/dzm/dzm.env /opt/dzm/current/dzm admin invite-owner
+EOF

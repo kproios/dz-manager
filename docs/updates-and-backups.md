@@ -28,7 +28,8 @@ touch /etc/dzm/hold                       # pause automatic updates
 rm /etc/dzm/hold                          # resume them
 ```
 
-The panel also shows the last update result and warns before the updater's GitHub token expires.
+The panel also shows the last update result, and warns before an optional updater GitHub token
+expires.
 If you set `DZM_ALERT_WEBHOOK`, a rolled-back update sends an alert.
 
 ### Backups

@@ -74,7 +74,7 @@ moving the game server to another provider does not need host access.
 /opt/dzm/releases/<tag>/dzm      immutable release directories (keep the last 3)
 /opt/dzm/current -> releases/<tag>
 /etc/dzm/dzm.env                 secrets and env (0640 root:dzm)
-/etc/dzm/updater.env             GitHub read-only token for the updater (0600 root:root)
+/etc/dzm/updater.env             optional GitHub token for the updater's rate limit (0600 root:root)
 /var/lib/dzm/                    0700 dzm:dzm, the app's only writable path
   dzm.db (+ -wal, -shm)          SQLite in WAL mode
   tiles/                         map tiles (written by the app or a one-off loader)

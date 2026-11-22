@@ -25,7 +25,7 @@ need to be comfortable copying commands into a terminal and editing a text file.
 | If you have… | Use |
 |---|---|
 | Windows or macOS, or any machine with Docker | [Docker](docker.md) |
-| A dedicated Debian machine or container you can reach from its console | [The Linux installer](../deploy/README.md) (adds automatic updates and backups) |
+| A Debian machine that does nothing else (home server, VM or VPS) | [The Linux installer](../deploy/README.md) (adds automatic updates and backups) |
 | Nothing yet | A free cloud VM, see [Hosting options](hosting.md), then Docker |
 
 ## Step 2: install and start it

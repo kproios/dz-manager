@@ -38,7 +38,8 @@ works behind home internet connections that do not allow incoming traffic.
 - You need a domain whose DNS is managed by Cloudflare (adding a domain to Cloudflare's free plan
   is free; the domain itself is bought from any registrar, often for a few euros per year).
 - Step-by-step setup: [HTTPS with Cloudflare Tunnel](../deploy/cloudflared/README.md).
-- The Linux installer already installs the tunnel program.
+- The Linux installer already installs the tunnel program. It leaves your SSH settings unchanged,
+  so it is safe on a cloud VM too.
 
 Do not use the temporary "quick tunnel" addresses for a live setup: they change every time the
 tunnel restarts, and the game server's configuration would break.

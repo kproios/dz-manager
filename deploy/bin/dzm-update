@@ -118,8 +118,14 @@ if [[ $source == dir:/* ]]; then
     src=${source#dir:}
     latest=$(cat "$src/latest")
 elif [[ $source == github ]]; then
-    if [[ -z ${GITHUB_TOKEN:-} ]]; then error='GitHub token is not configured'; exit 1; fi
-    printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" >"$work/auth"
+    # Releases are public: a token is optional and only raises GitHub's rate limit
+    # (60 anonymous API requests per hour per IP address; a check uses one, an install three).
+    : >"$work/auth"
+    if [[ -n ${GITHUB_TOKEN:-} ]]; then
+        printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" >"$work/auth"
+    else
+        expires=
+    fi
     code=$(curl --config "$work/auth" --silent --show-error --max-time 60 \
         -D "$work/headers" -o "$work/release.json" -w '%{http_code}' \
         -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
@@ -127,12 +133,16 @@ elif [[ $source == github ]]; then
     expiry=$(awk 'tolower($0) ~ /^github-authentication-token-expiration:/ {sub(/^[^:]*:[ ]*/, ""); sub(/\r$/, ""); print}' "$work/headers" | tail -1)
     [[ -z $expiry ]] || expires=$expiry
     if [[ $code == 404 ]]; then
-        # Private repositories also return 404 for invalid access. Check access first.
+        # 404 also means "no access" for a token without access. Check the repository first.
         curl --config "$work/auth" --silent --fail --max-time 30 -D "$work/repo-headers" \
             https://api.github.com/repos/kproios/dz-manager >/dev/null
         expiry=$(awk 'tolower($0) ~ /^github-authentication-token-expiration:/ {sub(/^[^:]*:[ ]*/, ""); sub(/\r$/, ""); print}' "$work/repo-headers" | tail -1)
         [[ -z $expiry ]] || expires=$expiry
         result=no_release; exit 0
+    fi
+    if [[ $code == 403 || $code == 429 ]] && grep -qi '^x-ratelimit-remaining: *0' "$work/headers"; then
+        error='GitHub rate limit reached for this IP address; the next check retries (a GITHUB_TOKEN in /etc/dzm/updater.env avoids this)'
+        exit 1
     fi
     [[ $code == 200 ]] || { error="GitHub releases endpoint returned HTTP $code"; exit 1; }
     latest=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name' "$work/release.json")
